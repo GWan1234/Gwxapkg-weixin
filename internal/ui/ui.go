@@ -29,7 +29,7 @@ func Banner() {
  ██║   ██║██║███╗██║ ██╔██╗ ██╔══██║██╔═══╝ ██╔═██╗ ██║   ██║
  ╚██████╔╝╚███╔███╔╝██╔╝ ██╗██║  ██║██║     ██║  ██╗╚██████╔╝
   ╚═════╝  ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝  ╚═╝ ╚═════╝`)
-	dim.Println("              Wxapkg Decompiler Tool v2.5.1")
+	dim.Println("              Wxapkg Decompiler Tool v2.6.0")
 	fmt.Println()
 }
 
@@ -115,7 +115,7 @@ func PrintUsage() {
 	fmt.Println()
 	white.Println("  scan                     扫描本地小程序")
 	white.Println("  all -id=<AppID>          自动查找并处理指定小程序")
-	white.Println("  repack -in=<目录>        重新打包")
+	white.Println("  repack -in=<目录> -id=<AppID>  重新打包为客户端可用 wxapkg")
 	fmt.Println()
 	cyan.Println("直接使用:")
 	dim.Println("  ./Gwxapkg -id=<AppID> -in=<文件路径>")
@@ -127,5 +127,8 @@ func PrintUsage() {
 	dim.Println("  -noClean     保留中间文件 (默认: false)")
 	dim.Println("  -save        保存解密文件 (默认: false)")
 	dim.Println("  -sensitive   获取敏感数据 (默认: true)")
+	dim.Println("  -workspace   保留可精确回包的隐藏工作区 (默认: false)")
+	dim.Println("  repack -id   生成加密包，适用于回写微信客户端")
+	dim.Println("  repack -raw  生成未加密包，仅供测试")
 	fmt.Println()
 }

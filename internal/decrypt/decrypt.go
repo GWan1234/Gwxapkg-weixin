@@ -71,3 +71,60 @@ func DecryptWxapkg(inputFile, appID string) ([]byte, error) {
 
 	return originData, nil
 }
+
+// EncryptWxapkg 将明文 wxapkg 重新加密为微信客户端可识别的格式
+func EncryptWxapkg(data []byte, appID string) ([]byte, error) {
+	if appID == "" {
+		return nil, fmt.Errorf("AppID 不能为空")
+	}
+
+	key := pbkdf2.Key([]byte(appID), []byte(saltStr), 1000, 32, sha1.New)
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, fmt.Errorf("创建AES密码块失败: %v", err)
+	}
+
+	// 微信客户端的包头结构约定：
+	// 1. 前 1023 字节走 AES-CBC
+	// 2. 其余内容走 XOR
+	// 3. AES 区块需要 16 字节对齐，因此补齐到 1024 字节
+	prefixPlain := make([]byte, 1024)
+	prefixLen := min(len(data), 1023)
+	copy(prefixPlain, data[:prefixLen])
+
+	encryptedPrefix := make([]byte, len(prefixPlain))
+	mode := cipher.NewCBCEncrypter(block, []byte(ivStr))
+	mode.CryptBlocks(encryptedPrefix, prefixPlain)
+
+	xorKey := byte(defaultXorKey)
+	if len(appID) >= 2 {
+		xorKey = appID[len(appID)-2]
+	}
+
+	tail := make([]byte, max(len(data)-1023, 0))
+	for i, b := range data[1023:] {
+		tail[i] = b ^ xorKey
+	}
+
+	encrypted := make([]byte, 0, len(fileHeader)+len(encryptedPrefix)+len(tail))
+	encrypted = append(encrypted, fileHeader...)
+	encrypted = append(encrypted, encryptedPrefix...)
+	encrypted = append(encrypted, tail...)
+
+	return encrypted, nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}

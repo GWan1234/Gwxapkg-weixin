@@ -70,7 +70,7 @@ func DetermineOutputDir(input, appID string) string {
 }
 
 // ProcessFile 合并目录
-func ProcessFile(inputFile, outputDir, appID string, save bool) error {
+func ProcessFile(inputFile, outputDir, appID string, save bool, workspace bool) error {
 	// log.Printf("开始处理文件: %s\n", inputFile)
 
 	manager := GetWxapkgManager()
@@ -78,6 +78,7 @@ func ProcessFile(inputFile, outputDir, appID string, save bool) error {
 	// 初始化 WxapkgInfo
 	info := &WxapkgInfo{
 		WxAppId:     appID,
+		PackageName: filepath.Base(inputFile),
 		IsExtracted: false,
 	}
 
@@ -134,6 +135,22 @@ func ProcessFile(inputFile, outputDir, appID string, save bool) error {
 		return fmt.Errorf("合并目录失败: %v", err)
 	}
 
+	info.RawFiles = append(info.RawFiles, filelist...)
+
+	if workspace {
+		rawRoot := filepath.Join(".gwxapkg", "raw", info.PackageName)
+		rawDir := filepath.Join(outputDir, filepath.FromSlash(rawRoot))
+
+		if err := os.RemoveAll(rawDir); err != nil {
+			return fmt.Errorf("清理原始工作区失败: %v", err)
+		}
+		if err := copyDir(tempDir, rawDir); err != nil {
+			return fmt.Errorf("复制原始工作区失败: %v", err)
+		}
+
+		info.RawRoot = filepath.ToSlash(rawRoot)
+	}
+
 	info.WxapkgType = util.GetWxapkgType(filelist)
 
 	if restore.IsMainPackage(info) {
@@ -146,6 +163,53 @@ func ProcessFile(inputFile, outputDir, appID string, save bool) error {
 	manager.AddPackage(info.SourcePath, info)
 
 	return nil
+}
+
+func copyDir(srcDir, dstDir string) error {
+	return filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		relPath, err := filepath.Rel(srcDir, path)
+		if err != nil {
+			return err
+		}
+
+		targetPath := filepath.Join(dstDir, relPath)
+		if info.IsDir() {
+			return os.MkdirAll(targetPath, 0755)
+		}
+
+		srcFile, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer func(srcFile *os.File) {
+			err := srcFile.Close()
+			if err != nil {
+				log.Printf("关闭文件 %s 失败: %v\n", srcFile.Name(), err)
+			}
+		}(srcFile)
+
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+			return err
+		}
+
+		dstFile, err := os.Create(targetPath)
+		if err != nil {
+			return err
+		}
+		defer func(dstFile *os.File) {
+			err := dstFile.Close()
+			if err != nil {
+				log.Printf("关闭文件 %s 失败: %v\n", dstFile.Name(), err)
+			}
+		}(dstFile)
+
+		_, err = io.Copy(dstFile, srcFile)
+		return err
+	})
 }
 
 // mergeDirs 合并目录

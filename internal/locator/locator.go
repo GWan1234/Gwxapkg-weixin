@@ -32,13 +32,7 @@ func Scan() ([]MiniProgramInfo, error) {
 
 	switch runtime.GOOS {
 	case "darwin":
-		// macOS 路径
-		basePaths = []string{
-			// 新版微信 (沙盒版本)
-			filepath.Join(homeDir, "Library/Containers/com.tencent.xinWeChat/Data/Documents/app_data/radium/Applet/packages"),
-			// 旧版微信 (非沙盒版本)
-			filepath.Join(homeDir, "Library/Application Support/WeChat/Applet/packages"),
-		}
+		basePaths = collectDarwinBasePaths(homeDir)
 	case "windows":
 		// Windows 路径
 		appData, err := os.UserConfigDir() // 通常是 AppData/Roaming
@@ -50,7 +44,13 @@ func Scan() ([]MiniProgramInfo, error) {
 		basePaths = append(basePaths, filepath.Join(homeDir, "Documents/WeChat Files/Applet"))
 	}
 
+	seen := make(map[string]struct{})
 	for _, basePath := range basePaths {
+		if _, ok := seen[basePath]; ok {
+			continue
+		}
+		seen[basePath] = struct{}{}
+
 		if _, err := os.Stat(basePath); err == nil {
 			// fmt.Printf("Found WeChat path: %s\n", basePath)
 			scanDirectory(basePath, &results)
@@ -63,6 +63,30 @@ func Scan() ([]MiniProgramInfo, error) {
 	})
 
 	return results, nil
+}
+
+func collectDarwinBasePaths(homeDir string) []string {
+	basePaths := []string{
+		// 旧版扫描路径
+		filepath.Join(homeDir, "Library/Containers/com.tencent.xinWeChat/Data/Documents/app_data/radium/Applet/packages"),
+		// 非沙盒版本
+		filepath.Join(homeDir, "Library/Application Support/WeChat/Applet/packages"),
+	}
+
+	patterns := []string{
+		// 新版微信将小程序缓存放在用户隔离目录下
+		filepath.Join(homeDir, "Library/Containers/com.tencent.xinWeChat/Data/Documents/app_data/radium/users/*/applet/packages"),
+	}
+
+	for _, pattern := range patterns {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			continue
+		}
+		basePaths = append(basePaths, matches...)
+	}
+
+	return basePaths
 }
 
 func scanDirectory(basePath string, results *[]MiniProgramInfo) {

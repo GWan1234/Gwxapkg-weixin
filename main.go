@@ -42,6 +42,7 @@ func handleAllCommand(args []string) {
 	noClean := allFlags.Bool("noClean", false, "是否保留中间文件")
 	save := allFlags.Bool("save", false, "是否保存解密后的文件")
 	sensitive := allFlags.Bool("sensitive", true, "是否获取敏感数据")
+	workspace := allFlags.Bool("workspace", false, "是否保留可精确回包的工作区")
 
 	allFlags.Parse(args)
 
@@ -80,7 +81,7 @@ func handleAllCommand(args []string) {
 	ui.PrintDivider()
 
 	// 使用目录路径而非单个文件
-	cmd.Execute(*appID, matched.Path, *outputDir, ".wxapkg", *restoreDir, *pretty, *noClean, *save, *sensitive)
+	cmd.Execute(*appID, matched.Path, *outputDir, ".wxapkg", *restoreDir, *pretty, *noClean, *save, *sensitive, *workspace)
 
 	ui.PrintDivider()
 	ui.Success("处理完成!")
@@ -127,6 +128,8 @@ func handleRepackCommand(args []string) {
 	inputDir := repackFlags.String("in", "", "输入目录路径")
 	outputDir := repackFlags.String("out", "", "输出目录路径")
 	watch := repackFlags.Bool("watch", false, "是否监听文件夹")
+	appID := repackFlags.String("id", "", "小程序 AppID（用于生成微信可直接打开的加密包）")
+	raw := repackFlags.Bool("raw", false, "输出未加密 wxapkg（仅供测试）")
 
 	repackFlags.Parse(args)
 
@@ -142,7 +145,7 @@ func handleRepackCommand(args []string) {
 	}
 
 	ui.Info("重新打包模式")
-	pack.Repack(*inputDir, *watch, *outputDir)
+	pack.Repack(*inputDir, *watch, *outputDir, *appID, *raw)
 }
 
 // handleDefaultCommand 处理默认命令行模式
@@ -156,6 +159,7 @@ func handleDefaultCommand() {
 	noClean := flag.Bool("noClean", false, "是否保留中间文件")
 	save := flag.Bool("save", false, "是否保存解密后的文件")
 	sensitive := flag.Bool("sensitive", true, "是否获取敏感数据")
+	workspace := flag.Bool("workspace", false, "是否保留可精确回包的工作区")
 
 	flag.Parse()
 
@@ -168,7 +172,7 @@ func handleDefaultCommand() {
 
 	ui.Info("开始处理小程序: %s", *appID)
 	ui.PrintDivider()
-	cmd.Execute(*appID, *input, *outputDir, *fileExt, *restoreDir, *pretty, *noClean, *save, *sensitive)
+	cmd.Execute(*appID, *input, *outputDir, *fileExt, *restoreDir, *pretty, *noClean, *save, *sensitive, *workspace)
 	ui.PrintDivider()
 	ui.Success("处理完成!")
 }

@@ -259,9 +259,9 @@ func (p *XssParser) Parse(option config.WxapkgInfo) error {
 		preRun(saveDir, scriptCode, files, func() {
 			runOnce()
 			for name, content := range result {
-			name = filepath.Join(saveDir, changeExt(name, ".wxss"))
-			_ = save(name, []byte(util.TransformCSS(content)))
-		}
+				name = filepath.Join(saveDir, changeExt(name, ".wxss"))
+				_ = save(name, []byte(util.TransformCSS(content)))
+			}
 		})
 	})
 
@@ -274,6 +274,12 @@ func scanHtml(dir string, manager *config.FileDeletionManager, cb func([]string)
 	// 删除相关的JS文件
 	suffixes := []string{".appservice.js", ".common.js", ".webview.js"}
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if shouldSkipWorkspacePath(dir, path, info) {
+			return filepath.SkipDir
+		}
 		if !info.IsDir() && strings.HasSuffix(info.Name(), ".html") {
 			if info.Name() != enum.PageFrameHtml {
 				files = append(files, path)

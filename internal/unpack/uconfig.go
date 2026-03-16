@@ -371,6 +371,12 @@ func findMatches(pattern, text string) []string {
 func scanDirByExt(dir, ext string) []string {
 	var files []string
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if shouldSkipWorkspacePath(dir, path, info) {
+			return filepath.SkipDir
+		}
 		if !info.IsDir() && strings.HasSuffix(info.Name(), ext) {
 			files = append(files, path)
 		}
@@ -389,4 +395,18 @@ func fixDir(file, base string) string {
 		return file
 	}
 	return filepath.ToSlash(rel)
+}
+
+func shouldSkipWorkspacePath(baseDir, path string, info os.FileInfo) bool {
+	if info == nil || !info.IsDir() {
+		return false
+	}
+
+	relPath, err := filepath.Rel(baseDir, path)
+	if err != nil {
+		return false
+	}
+
+	normalized := filepath.ToSlash(relPath)
+	return normalized == ".gwxapkg" || strings.HasPrefix(normalized, ".gwxapkg/")
 }

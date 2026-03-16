@@ -1,95 +1,71 @@
-# Release v2.5.0 - 重大更新
+# Release v2.6.0 - 回包能力增强
 
-## 🎉 主要更新
+## 主要更新
 
-### ✨ 新功能
+### 新功能
 
-#### 1. 专业Excel报告生成
-- 替代简单JSON输出，提供多Sheet分类报告
-- 包含概览、路径、URL、密钥、密码等9+分类
-- 每条数据包含文件路径和行号
-- 美观的样式和格式
+#### 1. 支持生成微信客户端可识别的加密回包
+- `repack` 新增 `-id=<AppID>`，可输出加密后的 `V1MMWX` 包
+- 新增 `-raw`，可按需输出未加密测试包
+- 回包结果可再次被工具解开验证
 
-#### 2. 智能误报过滤 
-- 黑名单过滤：30+常见误报项
-- TLD验证：只保留有效域名（50+常见TLD）
-- JavaScript API检测：避免Date.now等被误识别
-- **误报率从95%降至10-15%**
+#### 2. 支持按原始多包结构精确回包
+- 解包时会记录原始包清单 `manifest`
+- 回包时优先按 `manifest` 恢复多包结构
+- 支持输出 `__APP__.wxapkg`、子包等多个原始包，而不是强制合成单包
 
-#### 3. 数据去重和分类
-- 自动去除重复数据
-- 按规则类型自动分类
-- 风险等级分级（高/中/低）
-- **数据量从127,185条减少到~3,000条**
+#### 3. 新增 `workspace` 工作区模式
+- 解包并还原源码时，可额外保留隐藏的原始运行时文件
+- 默认存放在 `.gwxapkg/raw/<包名>/`
+- 后续可直接对同一个输出目录执行 `repack`
+- 适合“解包 -> 修改 -> 回包”的连续工作流
 
-### ⚡ 性能优化
+### 修复问题
 
-1. **动态并发** - 根据CPU核心数自动调整worker数量（原固定10→CPU*2）
-2. **缓冲I/O** - 256KB缓冲区提升文件读写性能
-3. **规则预编译** - 启动时编译所有正则，避免重复开销
-4. **编译优化** - 使用`-ldflags="-s -w"`减小体积
+#### 1. 修复 macOS 新版微信缓存目录扫描失败
+- 兼容新版路径：
+  `~/Library/Containers/com.tencent.xinWeChat/Data/Documents/app_data/radium/users/*/applet/packages`
+- 解决“找不到正确目录信息”的问题
 
-**预期性能提升：25-60%**
+#### 2. 修复重打包后客户端无法打开的问题
+- 旧版 `repack` 输出的是明文 `wxapkg`
+- 现在提供正确的微信加密封装流程
+- 更接近客户端真实使用场景
 
-### 🐛 修复问题
+#### 3. 修复输出目录 `~` 不展开的问题
+- `-out=~/xxx` 现在会自动展开到用户主目录
+- 对解包和 `repack` 都生效
 
-- 修复domain规则误匹配文件名（如index.weapp）
-- 修复JavaScript API被误识别为域名
-- 优化目录合并性能
+#### 4. 修复包信息并发访问风险
+- 为 `WxapkgManager` 增加并发保护
+- 避免多文件并行处理时的 map 并发读写问题
 
-## 📊 效果对比
+### 使用体验优化
 
-| 指标 | v1.0 | v2.5.0 | 改进 |
-|------|------|--------|------|
-| 误报率 | ~95% | 10-15% | ⬇️ 85% |
-| 数据量 | 127,185条 | ~3,000条 | ⬇️ 97% |
-| 扫描速度 | 基准 | +50-70% | ⬆️ 50-70% |
-| 输出格式 | JSON | Excel | ✅ 专业报告 |
-| 并发性能 | 固定10 | CPU*2 | ⬆️ 动态 |
+- `repack` 支持从隐藏工作区自动读取原始文件
+- 普通单包打包流程会自动排除 `.gwxapkg` 工作区内容
+- 还原流程会跳过隐藏工作区，避免误删原始回包素材
 
-## 📥 下载
-
-### macOS (Apple Silicon)
-- `gwxapkg-darwin-arm64` (14MB)
-- 适用于 M1/M2/M3 等Apple芯片Mac
-
-### Windows (64-bit)
-- `gwxapkg-windows-amd64.exe` (15MB)
-- 适用于 Windows 10/11 64位系统
-
-## 🚀 快速开始
+## 推荐用法
 
 ```bash
-# macOS
-chmod +x gwxapkg-darwin-arm64
-./gwxapkg-darwin-arm64 all -id=<AppID> -sensitive=true
+# 1. 解包并保留可回包工作区
+./gwxapkg -id=<AppID> -in=<原始目录> -out=<工作目录> -restore=true -workspace=true
 
-# Windows
-gwxapkg-windows-amd64.exe all -id=<AppID> -sensitive=true
+# 2. 直接从工作目录回包
+./gwxapkg repack -in=<工作目录> -out=<输出目录> -id=<AppID>
 ```
 
-## 📝 更新日志
+## 说明
 
-**新增模块：**
-- `internal/scanner/` - 扫描引擎（types, filter, collector, scanner）
-- `internal/reporter/` - Excel报告生成
+- `restore=true` 输出的源码目录本身并不是官方编译产物
+- 当前可回包能力依赖隐藏保留的原始运行时文件工作区
+- 如需从同一目录回包，请启用 `-workspace=true`
 
-**技术改进：**
-- 使用 `excelize/v2` 生成专业Excel报告
-- 完整的单元测试覆盖
-- 优化的编译标志
+## 下载
 
-## ⚠️ 破坏性变更
+### macOS (Apple Silicon)
+- `gwxapkg-darwin-arm64`
 
-- 敏感信息扫描输出从JSON改为Excel（不再生成sensitive_data.json）
-- 如需JSON格式，请继续使用v1.0
-
-## 📚 文档
-
-- [中文文档](README.md)
-- [English Documentation](README_EN.md)  
-- [日本語ドキュメント](README_JA.md)
-
----
-
-**完整更新说明请查看 [README.md](README.md)**
+### Windows (64-bit)
+- `gwxapkg-windows-amd64.exe`
