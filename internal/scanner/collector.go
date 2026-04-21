@@ -125,12 +125,12 @@ func (c *DataCollector) AddObfuscatedFile(file ObfuscatedFile) {
 func (c *DataCollector) addToCategory(item SensitiveItem) {
 	category := item.Category
 	if category == "" {
-		category = getCategoryKey(item.RuleID)
+		category = GetCategoryKey(item.RuleID)
 	}
 
 	if c.categories[category] == nil {
 		c.categories[category] = &CategoryData{
-			Name:  getCategoryName(category),
+			Name:  GetCategoryName(category),
 			Items: make(map[string][]LocationInfo),
 		}
 	}
@@ -246,101 +246,4 @@ func cloneObfuscatedFiles(files []ObfuscatedFile) []ObfuscatedFile {
 		result = append(result, cloned)
 	}
 	return result
-}
-
-// getCategoryKey 根据 rule_id 获取分类 key
-func getCategoryKey(ruleID string) string {
-	categoryMap := map[string]string{
-		"path":         "path",
-		"url":          "url",
-		"api_endpoint": "url",
-		"domain":       "domain",
-
-		// 密码和密钥
-		"password_generic":    "password",
-		"admin_password":      "password",
-		"root_password":       "password",
-		"default_password":    "password",
-		"test_password":       "password",
-		"ftp_password":        "password",
-		"smtp_password":       "password",
-		"ldap_password":       "password",
-		"vpn_password":        "password",
-		"wifi_password":       "password",
-		"encryption_password": "password",
-		"username_password":   "password",
-
-		// API Keys
-		"api_key_generic":   "api_key",
-		"aws_access_key_id": "api_key",
-		"aliyun_access_key": "api_key",
-		"tencent_secret_id": "api_key",
-		"google_api_key":    "api_key",
-		"github_pat":        "api_key",
-		"gitlab_pat":        "api_key",
-
-		// Secrets
-		"secret_key_generic":    "secret",
-		"aws_secret_access_key": "secret",
-		"client_secret":         "secret",
-		"app_secret":            "secret",
-		"wechat_secret":         "secret",
-
-		// Tokens
-		"bearer_token":  "token",
-		"api_token":     "token",
-		"auth_token":    "token",
-		"session_token": "token",
-		"access_token":  "token",
-
-		// 数据库
-		"jdbc_mysql":         "database",
-		"jdbc_postgresql":    "database",
-		"jdbc_oracle":        "database",
-		"mongodb_connection": "database",
-		"redis_connection":   "database",
-		"db_username":        "database",
-		"db_password":        "database",
-		"db_host":            "database",
-
-		// 联系信息
-		"phone_cn":   "contact",
-		"email":      "contact",
-		"id_card_cn": "contact",
-
-		// 其他
-		"ipv4":          "network",
-		"internal_ip":   "network",
-		"uuid":          "other",
-		"wechat_appid":  "wechat",
-		"wechat_corpid": "wechat",
-	}
-
-	if cat, ok := categoryMap[ruleID]; ok {
-		return cat
-	}
-	return "other"
-}
-
-// getCategoryName 获取分类中文名
-func getCategoryName(category string) string {
-	names := map[string]string{
-		"path":     "路径",
-		"url":      "URL",
-		"domain":   "域名",
-		"password": "账号密码",
-		"api_key":  "API密钥",
-		"secret":   "密钥",
-		"token":    "令牌",
-		"database": "数据库",
-		"contact":  "联系信息",
-		"network":  "网络信息",
-		"wechat":   "微信",
-		"other":    "其他",
-	}
-
-	if name, ok := names[category]; ok {
-		return name
-	}
-	return category
 }

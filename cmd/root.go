@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/25smoking/Gwxapkg/internal/analyzer"
 	. "github.com/25smoking/Gwxapkg/internal/cmd"
 	. "github.com/25smoking/Gwxapkg/internal/config"
 	"github.com/25smoking/Gwxapkg/internal/key"
@@ -154,5 +155,31 @@ func Execute(appID, input, outputDir, fileExt string, restoreDir bool, pretty bo
 		}
 
 		key.ResetCollector()
+	}
+
+	if restoreDir {
+		routeManifest, routeErr := analyzer.AnalyzeMiniProgram(outputDir, appID)
+		if routeErr != nil {
+			ui.Warning("生成页面与路由地图失败: %v", routeErr)
+			return
+		}
+
+		routeReporter := reporter.NewRouteReporter()
+		artifacts, err := routeReporter.Generate(routeManifest, outputDir)
+		if err != nil {
+			ui.Warning("写入页面与路由地图失败: %v", err)
+			return
+		}
+
+		ui.Success("页面路由清单: %s", artifacts.ManifestPath)
+		ui.Success("页面路由说明: %s", artifacts.MarkdownPath)
+		ui.Success("页面路由图: %s", artifacts.MermaidPath)
+		ui.Info("   - 页面数: %d | 跳转边: %d | 调用链边: %d | 共享助手: %d | TabBar: %d",
+			routeManifest.Summary.TotalPages,
+			routeManifest.Summary.NavigationEdgeCount,
+			routeManifest.Summary.CallChainEdgeCount,
+			routeManifest.Summary.SharedRouterHelperCount,
+			routeManifest.Summary.TabBarPages,
+		)
 	}
 }

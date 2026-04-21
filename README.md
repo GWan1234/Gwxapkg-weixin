@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-2.7.0-blue.svg)
+![Version](https://img.shields.io/badge/version-2.7.1-blue.svg)
 ![Go Version](https://img.shields.io/badge/go-%3E%3D1.21-00ADD8.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)
@@ -62,12 +62,14 @@
 - **完整还原** - wxml/wxss/js/json/wxs 全部支持
 - **代码美化** - 自动格式化 JavaScript/CSS/HTML 代码
 - **默认反混淆** - JavaScript 默认执行静态还原 + 受控解码，优先展开常见字符串数组、`\xNN`、`\uNNNN`、十六进制字面量
+- **页面路由地图** - 自动生成页面清单、入口页、分包、TabBar、组件依赖、静态/动态跳转边、事件触发线索与页面接口映射
 - **目录结构** - 还原微信小程序原始工程目录
 - **资源提取** - 图片/音频/视频等资源文件完整提取
 
 ### 🛡️ 安全分析 ⭐ NEW
-- **智能扫描** - 200+ 敏感信息检测规则
-- **误报过滤** - 智能黑名单，误报率从95%降至10-15%
+- **智能扫描** - 920 条默认敏感信息检测规则
+- **正式分类** - 规则统一归并到云平台、支付、通知协作、监控、安全、SaaS 等正式大类
+- **误报过滤** - 黑名单 + 占位符/示例值/掩码值/弱值过滤，多层收敛扫描噪声
 - **数据去重** - 自动去除重复数据，精准定位
 - **接口提取** - 自动提取 URL / API Endpoint，并可导出 Postman Collection
 - **Excel/HTML报告** - 专业多Sheet Excel 与交互式 HTML 报告，包含文件路径和行号
@@ -203,6 +205,9 @@ output/
     ├── sensitive_report.xlsx
     ├── sensitive_report.html
     ├── api_collection.postman_collection.json
+    ├── route_manifest.json
+    ├── route_map.md
+    ├── route_map.mmd
     └── .gwxapkg/                   # 仅在 -workspace=true 时生成
 ```
 
@@ -234,20 +239,43 @@ output/
 
 ## 🎯 敏感信息扫描
 
-### 扫描规则（200+）
+### 扫描规则（920 条默认规则）
+
+当前默认启用 920 条内置规则。虽然新增规则里大量命名仍然是 `xxx secret` 风格，但程序内部已经不再按字面名称粗暴归类，而是优先按服务域和用途统一整理成正式大类，避免报告里出现大量 `other` 或一股脑堆进 `secret`。
 
 | 分类 | 规则数 | 示例 |
 |------|--------|------|
+| **第三方 SaaS** | 596 | 各类 `xxx secret`、服务专属 token、Webhook、客户端凭证 |
+| **Secret / 密钥** | 67 | 通用 `client_secret`、`app_secret`、`session_secret` |
+| **开发与交付** | 40 | GitHub/GitLab/NPM/PyPI/Jenkins/Terraform/JFrog |
+| **云平台** | 35 | AWS、阿里云、腾讯云、华为云、Azure、Cloudflare |
+| **支付与电商** | 35 | Stripe、PayPal、Square、Razorpay、微信支付、Shopify |
+| **通知与协作** | 31 | Slack、Discord、Telegram、钉钉、飞书、Teams、Twilio |
+| **监控与告警** | 24 | Datadog、New Relic、Sentry、Grafana、PagerDuty |
+| **Token / 令牌** | 16 | JWT、Bearer、OAuth Token、会话令牌 |
+| **数据库与连接** | 15 | MySQL、PostgreSQL、MongoDB、Redis、ES、InfluxDB |
+| **密码** | 13 | 通用密码、Root/管理员密码、数据库/协议密码 |
+| **安全平台** | 13 | Auth0、Shodan、Censys、VirusTotal、AbuseIPDB |
+| **私钥与证书** | 11 | RSA/DSA/EC/OpenSSH/PKCS8 私钥、证书 |
+| **编码与指纹** | 8 | Hash、UUID、长 Base64、SSH 公钥 |
+| **联系信息** | 3 | 手机号、邮箱、身份证 |
+| **网络标识** | 3 | IPv4、内网 IP、MAC 地址 |
+| **API 密钥** | 3 | 通用 API Key / Access Key |
+| **微信生态** | 3 | AppID、CorpID、Secret |
+| **URL / API** | 2 | URL、API Endpoint |
 | **路径** | 1 | 文件路径、系统路径 |
-| **URL** | 2 | HTTP/HTTPS链接、API端点 |
-| **域名** | 1 | 域名地址（TLD验证） |
-| **账号密码** | 12+ | 各类密码、数据库凭证 |
-| **API密钥** | 40+ | AWS/阿里云/腾讯云等密钥 |
-| **令牌** | 30+ | JWT/Bearer/OAuth令牌 |
-| **数据库** | 15+ | MySQL/MongoDB/Redis连接串 |
-| **联系信息** | 3 | 手机号/邮箱/身份证 |
-| **微信** | 4 | AppID/Secret/Webhook |
-| **其他** | 90+ | 证书/哈希/UUID等 |
+| **域名** | 1 | 域名地址（带 TLD 校验） |
+
+### 误报控制策略
+
+为了在扩到 920 条规则后仍然尽量可用，当前扫描器默认会做这几层收敛：
+
+- **黑名单过滤**：跳过常见静态资源名、框架 API 片段和明显非敏感内容
+- **上下文过滤**：域名类继续做 TLD 校验、JS API 语境过滤、路径长度校验
+- **占位符过滤**：自动排除 `your_api_key`、`replace_me`、`changeme`、`placeholder` 这类示例值
+- **掩码值过滤**：自动排除 `xxxxxx`、`******`、`<token>` 这类脱敏或占位文本
+- **弱值过滤**：对凭证类结果增加最小长度、字符形态和普通词检测，减少明显弱命中
+
 
 ### 扫描与导出行为
 
@@ -258,21 +286,44 @@ output/
 - 无法可靠推断 HTTP 方法时，Postman 中会写入 `UNKNOWN`
 - 相对接口路径会原样保留，不会自动拼接 `baseUrl`
 
+## 🧭 页面与路由地图
+
+解包完成后的输出目录现在会默认额外生成：
+
+- `route_manifest.json`：机器可读的页面与路由结构清单
+- `route_map.md`：便于人工审阅的页面说明文档
+- `route_map.mmd`：Mermaid 图结构，可直接渲染页面跳转关系
+
+当前能力已覆盖：
+
+- 入口页识别
+- 主包 / 分包页面清单
+- TabBar 页面
+- 页面标题与页面文件映射
+- `usingComponents` 组件依赖
+- `wx.navigateTo` / `redirectTo` / `reLaunch` / `switchTab`
+- WXML `<navigator>` 静态跳转
+- WXML `bindtap` / `catchtap` 触发元素与 handler 反查
+- `data-url` / `data-route` / `data-path` / `data-page` 这类数据目标回填
+- 模板字符串、字符串拼接、`dataset.url` 这类动态路由线索
+- 页面按钮文案 / 触发事件 / handler 名关联到跳转边
+- 页面脚本中的直接接口调用归属
+- 页面引用共享服务模块后的间接接口归属
+- 页面 handler -> 本地 helper -> 共享 helper -> 最终跳转 的跨文件调用链恢复
+- `utils/router.js`、`common/nav.js` 这类共享路由助手识别与归档
+- 未在 `app.json` 中声明但脚本中出现 `Page(...)` 的孤页候选
+
+
 ### 报告内容
 
 生成的 Excel / HTML 报告包含以下内容：
 
 - **概览** - 扫描统计、风险分布、分类汇总
-- **路径** - 所有路径类敏感信息
-- **URL** - 所有URL和API端点
-- **域名** - 域名地址（已过滤误报）
-- **账号密码** - 密码和凭证信息
-- **API密钥** - 各类云服务密钥
-- **令牌** - 访问令牌和会话信息
-- **数据库** - 数据库连接信息
-- **联系信息** - 手机号、邮箱等
-- **微信** - 微信相关配置
-- **其他** - 其他敏感信息
+- **分类页** - 按实际命中动态生成，例如云平台、支付与电商、通知与协作、开发与交付、第三方 SaaS
+- **URL / API** - URL、API Endpoint 与接口上下文
+- **数据库与连接** - JDBC、MongoDB、Redis、ES 等连接信息
+- **密码 / Secret / Token** - 密码、通用密钥、会话或访问令牌
+- **微信生态** - 微信相关配置
 - **混淆文件** - 命中的混淆文件、分数、技术点、还原状态
 
 每条数据包含：
@@ -318,12 +369,12 @@ output/
 
 ---
 
-## 📈 性能对比（v2.7.0 vs v1.0）
+## 📈 性能对比（v2.7.1 vs v1.0）
 
-| 指标 | v1.0 | v2.7.0 | 改进 |
+| 指标 | v1.0 | v2.7.1 | 改进 |
 |------|------|--------|------|
 | **扫描速度** | 基准 | +50-70% | ⬆️⬆️⬆️ 规则预编译 |
-| **误报率** | ~95% | 10-15% | ⬇️⬇️⬇️ 智能过滤 |  
+| **误报控制** | 基础正则直扫 | 多层过滤收敛 | ✅ 黑名单 + 上下文 + 占位符 + 弱值过滤 |  
 | **数据量** | 127,185条 | ~3,000条 | ⬇️⬇️⬇️ 去重+过滤 |
 | **输出格式** | JSON | Excel/HTML | ✅ 交互式报告 |
 | **并发性能** | 10固定 | CPU*2动态 | ⬆️⬆️ 自适应 |
@@ -332,6 +383,16 @@ output/
 ---
 
 ## 🔄 版本更新
+
+### v2.7.1 (2026-04-21) - 🧭 路由分析增强
+
+#### 🆕 新增功能
+- 🔗 **跨页面调用链恢复** - 页面 `handler -> 本地 helper -> 共享 helper -> 最终跳转` 现在会写入 `route_manifest.json`
+- 🧭 **共享路由助手识别** - 自动识别 `utils/router.js`、`common/nav.js` 这类共享跳转封装，并统计使用页面、方法与目标线索
+
+#### 🔧 改进
+- 📊 **路由报告增强** - `route_map.md` / `route_map.mmd` 会展示调用链与共享路由助手信息
+- 🧹 **降级边裁剪** - 当已恢复出真实跳转方法时，自动去掉重复的 `UNKNOWN` 兜底边，减少噪声
 
 ### v2.7.0 (2026-04-18) - 💥 大版本功能增强
 
@@ -346,6 +407,8 @@ output/
 - 🏷️ **混淆文件报告** - Excel / HTML 概览新增混淆文件统计，并提供单独清单
 - 🧭 **缓存路径诊断** - `scan --verbose` / `all --verbose` 输出微信缓存候选路径诊断
 - 📦 **内置规则优先** - 默认直接使用内置规则，不再自动生成 `rule.yaml`
+- 🗃️ **规则分类重整** - 将 920 条规则统一整理为云平台、支付、协作、监控、安全、SaaS 等正式大类
+- 🧹 **误报控制增强** - 新增占位符、掩码值、弱值过滤，降低 920 条规则扩容后的噪声
 
 ### v2.6.0 (2026-03-17) - 🚀 稳定版本
 
@@ -413,6 +476,7 @@ Gwxapkg/
 │   ├── key/              # 规则管理，预编译
 │   ├── scanner/          # ⭐ NEW 扫描引擎
 │   │   ├── types.go      # 数据模型
+│   │   ├── rule_meta.go  # 规则分类、名称、风险等级
 │   │   ├── filter.go     # 误报过滤
 │   │   ├── collector.go  # 数据收集和去重
 │   │   ├── scanner.go    # 扫描逻辑
@@ -467,7 +531,7 @@ Gwxapkg/
 <img src="https://i.imgur.com/9PxS5IK.jpeg" width="300" />
 
 ---
-
+ß
 ## ☕ 请我喝咖啡
 
 如果这个工具帮助了你，欢迎请我喝杯咖啡 ☕，这将是对我持续更新的最大动力！

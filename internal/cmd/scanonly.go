@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/25smoking/Gwxapkg/internal/analyzer"
 	"github.com/25smoking/Gwxapkg/internal/formatter"
 	"github.com/25smoking/Gwxapkg/internal/key"
 	"github.com/25smoking/Gwxapkg/internal/reporter"
@@ -43,6 +44,14 @@ func ScanOnly(dir string, appID string, format string, outputDir string, postman
 			return nil
 		}
 		if d.IsDir() {
+			if d.Name() == ".gwxapkg" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		relPath, _ := filepath.Rel(dir, path)
+		relPath = filepath.ToSlash(relPath)
+		if shouldSkipGeneratedArtifact(relPath) {
 			return nil
 		}
 		ext := strings.ToLower(filepath.Ext(d.Name()))
@@ -55,9 +64,6 @@ func ScanOnly(dir string, appID string, format string, outputDir string, postman
 			return nil
 		}
 		fileCount++
-		relPath, _ := filepath.Rel(dir, path)
-		relPath = filepath.ToSlash(relPath)
-
 		if ext == ".js" {
 			result, analyzeErr := formatter.AnalyzeJavaScript(content, relPath)
 			if analyzeErr == nil && result != nil {
@@ -129,6 +135,28 @@ func ScanOnly(dir string, appID string, format string, outputDir string, postman
 		}
 	}
 
+	routeManifest, routeErr := analyzer.AnalyzeMiniProgram(dir, appID)
+	if routeErr != nil {
+		ui.Warning("生成页面与路由地图失败: %v", routeErr)
+	} else {
+		rr := reporter.NewRouteReporter()
+		artifacts, err := rr.Generate(routeManifest, outputDir)
+		if err != nil {
+			ui.Warning("写入页面与路由地图失败: %v", err)
+		} else {
+			ui.Success("页面路由清单: %s", artifacts.ManifestPath)
+			ui.Success("页面路由说明: %s", artifacts.MarkdownPath)
+			ui.Success("页面路由图: %s", artifacts.MermaidPath)
+			ui.Info("   - 页面数: %d | 跳转边: %d | 调用链边: %d | 共享助手: %d | TabBar: %d",
+				routeManifest.Summary.TotalPages,
+				routeManifest.Summary.NavigationEdgeCount,
+				routeManifest.Summary.CallChainEdgeCount,
+				routeManifest.Summary.SharedRouterHelperCount,
+				routeManifest.Summary.TabBarPages,
+			)
+		}
+	}
+
 	key.ResetCollector()
 
 	if generated == 0 && !postman {
@@ -159,4 +187,19 @@ func isTextFile(ext string) bool {
 		"": true, // 无扩展名文件也扫描
 	}
 	return textExts[ext]
+}
+
+func shouldSkipGeneratedArtifact(relPath string) bool {
+	name := filepath.Base(relPath)
+	switch name {
+	case "sensitive_report.html",
+		"sensitive_report.xlsx",
+		"api_collection.postman_collection.json",
+		"route_manifest.json",
+		"route_map.md",
+		"route_map.mmd":
+		return true
+	default:
+		return false
+	}
 }

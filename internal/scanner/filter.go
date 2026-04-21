@@ -48,6 +48,57 @@ var (
 		"myunke": true, "iwofang": true, "weixin": true, "qq": true,
 		"dingtalk": true, "feishu": true,
 	}
+
+	credentialCategories = map[string]bool{
+		"password":      true,
+		"api_key":       true,
+		"secret":        true,
+		"token":         true,
+		"private_key":   true,
+		"cloud":         true,
+		"payment":       true,
+		"messaging":     true,
+		"devops":        true,
+		"observability": true,
+		"security":      true,
+		"saas":          true,
+		"wechat":        true,
+	}
+
+	placeholderValues = map[string]bool{
+		"api_key":                 true,
+		"access_key":              true,
+		"secret":                  true,
+		"client_secret":           true,
+		"token":                   true,
+		"password":                true,
+		"your_api_key":            true,
+		"your_access_key":         true,
+		"your_secret":             true,
+		"your_client_secret":      true,
+		"your_token":              true,
+		"your_password":           true,
+		"example_api_key":         true,
+		"example_token":           true,
+		"example_secret":          true,
+		"sample_api_key":          true,
+		"sample_token":            true,
+		"replace_me":              true,
+		"replace_with_real_value": true,
+		"change_me":               true,
+		"changeme":                true,
+		"placeholder":             true,
+		"dummy":                   true,
+		"mock":                    true,
+		"foobar":                  true,
+		"null":                    true,
+		"undefined":               true,
+		"none":                    true,
+		"nil":                     true,
+	}
+
+	placeholderContextPattern = regexp.MustCompile(`(?i)\b(example|sample|demo|dummy|mock|placeholder|replace(?:[_ -]?me|[_ -]?with)?|changeme|change[_ -]?me|todo)\b`)
+	maskedValuePattern        = regexp.MustCompile(`(?i)^(?:x{4,}|\*{4,}|-{4,}|_{4,}|#.{3,}|<[^>]+>|\{[^}]+\}|\[[^\]]+\])$`)
 )
 
 // SensitiveFilter 误报过滤器
@@ -75,14 +126,25 @@ func (f *SensitiveFilter) ShouldSkip(ruleID, content, context string) bool {
 		return true
 	}
 
+	category := GetCategoryKey(ruleID)
+	trimmed := trimMatchWrappers(content)
+
+	if f.isPlaceholderValue(trimmed, context) {
+		return true
+	}
+
+	if credentialCategories[category] && f.isWeakCredential(trimmed, context, category) {
+		return true
+	}
+
 	// 域名规则的特殊过滤
-	if ruleID == "domain" {
-		return f.isDomainFalsePositive(content, context)
+	if category == "domain" {
+		return f.isDomainFalsePositive(trimmed, context)
 	}
 
 	// Path 规则的特殊过滤
-	if ruleID == "path" {
-		return f.isPathFalsePositive(content)
+	if category == "path" {
+		return f.isPathFalsePositive(trimmed)
 	}
 
 	return false
@@ -126,6 +188,63 @@ func (f *SensitiveFilter) isPathFalsePositive(content string) bool {
 	return false
 }
 
+func (f *SensitiveFilter) isWeakCredential(content, context, category string) bool {
+	normalized := normalizeCandidate(content)
+	if normalized == "" {
+		return true
+	}
+
+	if maskedValuePattern.MatchString(content) {
+		return true
+	}
+
+	if len(normalized) >= 4 && isMostlyRepeatedMask(normalized) {
+		return true
+	}
+
+	switch category {
+	case "password":
+		if len(normalized) < 4 {
+			return true
+		}
+	default:
+		if len(normalized) < 8 {
+			return true
+		}
+	}
+
+	if looksLikePlainWord(normalized) && len(normalized) < 20 {
+		return true
+	}
+
+	if placeholderContextPattern.MatchString(context) && looksLikePlaceholderToken(normalized) {
+		return true
+	}
+
+	return false
+}
+
+func (f *SensitiveFilter) isPlaceholderValue(content, context string) bool {
+	normalized := normalizeCandidate(content)
+	if normalized == "" {
+		return true
+	}
+
+	if placeholderValues[normalized] {
+		return true
+	}
+
+	if looksLikePlaceholderToken(normalized) {
+		return true
+	}
+
+	if placeholderContextPattern.MatchString(context) && len(normalized) < 24 {
+		return true
+	}
+
+	return false
+}
+
 // hasValidTLD 检查是否有有效的顶级域名
 func hasValidTLD(domain string) bool {
 	parts := strings.Split(domain, ".")
@@ -163,4 +282,63 @@ func isJavaScriptAPI(content, context string) bool {
 	}
 
 	return false
+}
+
+func trimMatchWrappers(content string) string {
+	return strings.Trim(content, "\"'` ")
+}
+
+func normalizeCandidate(content string) string {
+	normalized := strings.ToLower(strings.TrimSpace(content))
+	normalized = strings.Trim(normalized, "\"'`")
+	normalized = strings.TrimPrefix(normalized, "bearer ")
+	normalized = strings.TrimPrefix(normalized, "basic ")
+	return strings.Trim(nonAlnumPattern.ReplaceAllString(normalized, "_"), "_")
+}
+
+func looksLikePlaceholderToken(content string) bool {
+	if content == "" {
+		return false
+	}
+
+	return strings.Contains(content, "your_") ||
+		strings.Contains(content, "example") ||
+		strings.Contains(content, "sample") ||
+		strings.Contains(content, "placeholder") ||
+		strings.Contains(content, "replace_") ||
+		strings.Contains(content, "changeme") ||
+		strings.Contains(content, "change_me")
+}
+
+func isMostlyRepeatedMask(content string) bool {
+	first := content[0]
+	sameCount := 0
+	maskCount := 0
+	for i := 0; i < len(content); i++ {
+		if content[i] == first {
+			sameCount++
+		}
+		switch content[i] {
+		case 'x', 'X', '*', '#', '_', '-':
+			maskCount++
+		}
+	}
+
+	return sameCount == len(content) || maskCount*100/len(content) >= 80
+}
+
+func looksLikePlainWord(content string) bool {
+	if content == "" {
+		return false
+	}
+
+	for i := 0; i < len(content); i++ {
+		ch := content[i]
+		if (ch >= 'a' && ch <= 'z') || ch == '_' {
+			continue
+		}
+		return false
+	}
+
+	return true
 }

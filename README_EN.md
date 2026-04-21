@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-2.7.0-blue.svg)
+![Version](https://img.shields.io/badge/version-2.7.1-blue.svg)
 ![Go Version](https://img.shields.io/badge/go-%3E%3D1.21-00ADD8.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)
@@ -50,94 +50,102 @@ A Go-based WeChat Mini Program `.wxapkg` unpacker with automatic scanning, decry
 
 ---
 
-## Key Features
+## ✨ Core Features
 
 ### Smart Unpacking
-- Auto-scan WeChat Mini Program cache directories on macOS and Windows
-- Auto-decrypt encrypted `wxapkg` files from desktop WeChat cache
-- One-command processing for a specified AppID
-- Proper handling of main packages and subpackages
+- **Automatic scanning** - Detects WeChat Mini Program cache directories on macOS and Windows
+- **Automatic decryption** - Supports encrypted `wxapkg` decryption from desktop WeChat cache
+- **One-command unpacking** - Finds and processes all packages for a specified AppID
+- **Subpackage handling** - Correctly handles dependencies between main and subpackages
 
 ### Code Restoration
-- Full restoration for `wxml`, `wxss`, `js`, `json`, and `wxs`
-- Automatic JavaScript/CSS/HTML formatting
-- Default JavaScript deobfuscation for common string-array, `\xNN`, `\uNNNN`, and hexadecimal literal patterns
-- Restore the original Mini Program project structure
-- Extract images, audio, video, and other resources
+- **Full restoration** - Supports `wxml`, `wxss`, `js`, `json`, and `wxs`
+- **Code beautification** - Automatically formats JavaScript, CSS, and HTML
+- **Default deobfuscation** - Performs static restoration and controlled decoding for common string-array patterns, `\xNN`, `\uNNNN`, and hexadecimal literals
+- **Route map generation** - Builds page lists, entry pages, subpackages, TabBar pages, component dependencies, static and dynamic navigation edges, trigger clues, and page-level API attribution
+- **Project structure restore** - Restores the original Mini Program directory structure
+- **Asset extraction** - Fully extracts images, audio, video, and other resource files
 
 ### Security Analysis
-- 200+ built-in sensitive-data detection rules
-- Better false-positive filtering and deduplication
-- URL / API endpoint extraction with optional Postman Collection export
-- Excel and HTML reports with file paths and line numbers
-- Obfuscated-file reporting with restoration status
+- **Smart scanning** - 920 built-in sensitive-data detection rules enabled by default
+- **Formal categories** - Rules are normalized into cloud, payment, collaboration, monitoring, security, SaaS, and other formal groups
+- **False-positive filtering** - Blacklist plus placeholder, sample-value, masked-value, and weak-value filtering to reduce scan noise
+- **Deduplication** - Removes duplicate findings and preserves precise locations
+- **API extraction** - Extracts URL / API endpoints and can export a Postman Collection
+- **Excel / HTML reports** - Generates professional multi-sheet Excel and interactive HTML reports with file paths and line numbers
+- **Risk grading** - Automatically classifies high, medium, and low risk findings
+- **Obfuscation reporting** - Lists obfuscated files and restoration status separately in reports
 
-### Performance
-- Dynamic worker count based on CPU cores
-- Buffered file output
-- Regex precompilation
-- Optimized release builds
+### Performance Optimization
+- **Dynamic concurrency** - Adjusts worker count based on CPU cores
+- **Buffered I/O** - Uses a 256 KB buffer to improve file read/write performance
+- **Precompiled rules** - Compiles regex rules at startup to avoid repeated overhead
+- **Optimized builds** - Uses optimized build flags for smaller binaries and faster execution
 
 ---
 
-## Supported File Types
+## 📊 Supported File Types
 
 | File Type | Support | Description |
 |-----------|---------|-------------|
 | `.wxml` | Yes | Page structure restoration |
 | `.wxss` | Yes | Style restoration |
-| `.js` | Yes | Restoration, formatting, and default deobfuscation |
-| `.json` | Yes | Config extraction |
+| `.js` | Yes | JavaScript restoration, beautification, and default deobfuscation |
+| `.json` | Yes | Configuration extraction |
 | `.wxs` | Yes | WXS restoration |
-| Images / Audio / Video | Yes | Resource extraction |
+| Images / Audio / Video | Yes | Full asset extraction |
 
 ---
 
-## Installation
+## 📥 Installation
 
-### Download Prebuilt Binary
+### Option 1: Download Prebuilt Binaries
 
-Download the appropriate binary from [Releases](https://github.com/25smoking/Gwxapkg/releases).
+Download the correct executable for your platform from [Releases](https://github.com/25smoking/Gwxapkg/releases).
 
-### Build from Source
+### Option 2: Build from Source
 
 ```bash
+# Clone the repository
 git clone https://github.com/25smoking/Gwxapkg.git
 cd Gwxapkg
 
+# Build an optimized binary
 go build -ldflags="-s -w" -o gwxapkg .
+
+# Or run directly
+go run . -h
 ```
 
-Requirement: Go 1.21 or later.
+**Requirement:** Go 1.21 or later
 
 ---
 
-## Quick Start
+## 🚀 Quick Start
+
+### Basic Usage
 
 ```bash
-# Scan cached Mini Programs
-./gwxapkg scan
-
-# Scan with cache-path diagnostics
-./gwxapkg scan --verbose
-
-# Process a specific AppID
+# Automatically scan and process a Mini Program by AppID
 ./gwxapkg all -id=<AppID>
 
-# Process a specific AppID and export Postman Collection
-./gwxapkg all -id=<AppID> -postman
+# List all available Mini Programs
+./gwxapkg scan
 
-# Scan an already-unpacked directory only
-./gwxapkg scan-only -dir=./output/<AppID> -format=both -postman
+# Show WeChat cache candidate-path diagnostics
+./gwxapkg scan --verbose
 
 # Unpack a single wxapkg file
 ./gwxapkg -id=<AppID> -in=<file_path>
+
+# Scan an already unpacked directory and export Postman Collection
+./gwxapkg scan-only -dir=<directory> -format=both -postman
 
 # Repack
 ./gwxapkg repack -in=<directory_path>
 ```
 
-### Common Flags
+### CLI Parameters
 
 | Flag | Description | Default |
 |------|-------------|---------|
@@ -146,20 +154,39 @@ Requirement: Go 1.21 or later.
 | `-out` | Output directory | auto |
 | `-restore` | Restore project directory structure | true |
 | `-pretty` | Beautify output | true |
-| `-sensitive` | Generate Excel / HTML sensitive reports | true |
+| `-sensitive` | Enable sensitive-data scanning | true |
 | `-postman` | Export `api_collection.postman_collection.json` | false |
-| `-workspace` | Keep internal workspace for precise repack | false |
-| `--verbose` | Show scan diagnostics for cache candidates | false |
+| `-noClean` | Keep intermediate temporary files | false |
+| `-save` | Save decrypted files | false |
+| `-workspace` | Keep hidden workspace for precise repacking | false |
+| `--verbose` | Print cache candidate-path diagnostics (`scan` / `all` only) | false |
 
----
+### Examples
 
-## Default Output Directory
+```bash
+# Example 1: auto scan and process by AppID
+./gwxapkg all -id=wx3c19e32cb8f31289
 
-If `-out` is not provided, results are written to `output/<AppID>`.
+# Example 2: unpack and export Postman Collection
+./gwxapkg all -id=wx3c19e32cb8f31289 -postman
 
-- Compiled binary: under the executable directory
-- `go run .`: under the current working directory
-- Interactive `scan`: also uses `output/<AppID>`
+# Example 3: unpack a single file
+./gwxapkg -id=wx123456 -in=test.wxapkg -out=./output
+
+# Example 4: rescan an unpacked directory
+./gwxapkg scan-only -dir=./output/wx123456 -format=both -postman
+
+# Example 5: repack
+./gwxapkg repack -in=./source_dir -out=new.wxapkg
+```
+
+### Default Output Directory
+
+If `-out` is not specified, the output rules are:
+
+- Compiled binary: `output/<AppID>` under the executable directory
+- `go run .` or development mode: `output/<AppID>` under the current working directory
+- Interactive `scan` mode: also uses `output/<AppID>`
 
 Example:
 
@@ -168,7 +195,7 @@ Example:
 ./output/wx1234567890abcdef
 ```
 
-Typical output:
+### Typical Output Structure
 
 ```text
 output/
@@ -178,78 +205,318 @@ output/
     ├── sensitive_report.xlsx
     ├── sensitive_report.html
     ├── api_collection.postman_collection.json
-    └── .gwxapkg/
+    ├── route_manifest.json
+    ├── route_map.md
+    ├── route_map.mmd
+    └── .gwxapkg/                   # only when -workspace=true
 ```
 
 ---
 
-## Security Reports
+## 📁 WeChat Mini Program Cache Locations
 
-### Report Outputs
+### macOS
 
-- `-sensitive=true` generates:
-  - `sensitive_report.xlsx`
-  - `sensitive_report.html`
-- `-postman=true` generates:
-  - `api_collection.postman_collection.json`
+```text
+~/Library/Containers/com.tencent.xinWeChat/Data/Library/Caches/
+├── applet/
+│   ├── release/
+│   └── debug/
+└── ...
+```
+
+### Windows
+
+```text
+%USERPROFILE%\Documents\WeChat Files\Applet\
+├── wx<appid>/
+│   ├── <version>/
+│   │   ├── __APP__.wxapkg
+│   │   └── __SUBCONTEXT__.wxapkg
+│   └── ...
+└── ...
+```
+
+---
+
+## 🎯 Sensitive Information Scanning
+
+### Scanning Rules (920 Built-in Rules)
+
+920 built-in rules are enabled by default. Although many of the newly added rules still use names like `xxx secret`, the program no longer classifies them purely by literal names. Instead, it prioritizes service domain and usage so the report stays organized instead of dumping everything into `secret` or `other`.
+
+| Category | Rules | Examples |
+|----------|-------|----------|
+| **Third-party SaaS** | 596 | Various `xxx secret`, service-specific tokens, webhooks, client credentials |
+| **Secrets / Keys** | 67 | Generic `client_secret`, `app_secret`, `session_secret` |
+| **Development & Delivery** | 40 | GitHub, GitLab, NPM, PyPI, Jenkins, Terraform, JFrog |
+| **Cloud Platforms** | 35 | AWS, Alibaba Cloud, Tencent Cloud, Huawei Cloud, Azure, Cloudflare |
+| **Payments & E-commerce** | 35 | Stripe, PayPal, Square, Razorpay, WeChat Pay, Shopify |
+| **Notification & Collaboration** | 31 | Slack, Discord, Telegram, DingTalk, Feishu, Teams, Twilio |
+| **Monitoring & Alerting** | 24 | Datadog, New Relic, Sentry, Grafana, PagerDuty |
+| **Tokens** | 16 | JWT, Bearer, OAuth tokens, session tokens |
+| **Databases & Connections** | 15 | MySQL, PostgreSQL, MongoDB, Redis, ES, InfluxDB |
+| **Passwords** | 13 | Generic passwords, root/admin passwords, DB/protocol passwords |
+| **Security Platforms** | 13 | Auth0, Shodan, Censys, VirusTotal, AbuseIPDB |
+| **Private Keys & Certificates** | 11 | RSA, DSA, EC, OpenSSH, PKCS8 private keys and certificates |
+| **Encoding & Fingerprints** | 8 | Hashes, UUIDs, long Base64 strings, SSH public keys |
+| **Contact Information** | 3 | Phone numbers, email addresses, identity numbers |
+| **Network Identifiers** | 3 | IPv4, private IPs, MAC addresses |
+| **API Keys** | 3 | Generic API key / access key |
+| **WeChat Ecosystem** | 3 | AppID, CorpID, Secret |
+| **URL / API** | 2 | URLs, API endpoints |
+| **Paths** | 1 | File paths, system paths |
+| **Domains** | 1 | Domain names with TLD validation |
+
+### False-positive Control Strategy
+
+To keep the 920-rule ruleset usable, the scanner applies several filtering layers by default:
+
+- **Blacklist filtering** - skips common static resource names, framework API fragments, and obviously non-sensitive content
+- **Context filtering** - continues to enforce TLD validation, JS API context checks, and path-length checks
+- **Placeholder filtering** - excludes examples like `your_api_key`, `replace_me`, `changeme`, and `placeholder`
+- **Masked-value filtering** - excludes masked text such as `xxxxxx`, `******`, and `<token>`
+- **Weak-value filtering** - adds minimum length, character-shape, and common-word checks for credential-like matches
+
+### Scan and Export Behavior
+
+- `-sensitive=true` generates `sensitive_report.xlsx` and `sensitive_report.html`
+- `-postman=true` generates `api_collection.postman_collection.json`
 - `-postman` is independent from `-sensitive`
-- `scan-only` reuses the same scanner and deobfuscation pipeline
+- `scan-only` reuses the same scanner and JS deobfuscation pipeline
+- If the HTTP method cannot be inferred reliably, Postman exports `UNKNOWN`
+- Relative API paths remain unchanged and are not prefixed with any `baseUrl`
 
-### Obfuscated File Reporting
+## 🧭 Page and Route Map
 
-When JavaScript matches supported obfuscation patterns, the report records:
+After unpacking, the output directory also includes:
 
+- `route_manifest.json`: machine-readable page and route structure
+- `route_map.md`: human-readable route description
+- `route_map.mmd`: Mermaid graph for navigation rendering
+
+Current route recovery covers:
+
+- Entry-page detection
+- Main-package and subpackage page lists
+- TabBar pages
+- Page titles and file mapping
+- `usingComponents` dependencies
+- `wx.navigateTo`, `redirectTo`, `reLaunch`, and `switchTab`
+- Static WXML `<navigator>` navigation
+- WXML `bindtap` / `catchtap` trigger-to-handler mapping
+- `data-url`, `data-route`, `data-path`, and `data-page` backfilling
+- Dynamic route hints from template strings, string concatenation, and `dataset.url`
+- Trigger text, trigger event, and handler name association
+- Direct API attribution from page scripts
+- Indirect API attribution from shared service modules
+- Cross-file call-chain recovery from page handler to local helper to shared helper to final navigation
+- Shared router helper inventory for files such as `utils/router.js` and `common/nav.js`
+- Orphan-page candidates where `Page(...)` exists but the page is missing from `app.json`
+
+### Report Content
+
+Generated Excel / HTML reports include:
+
+- **Overview** - scan stats, risk distribution, and category summary
+- **Category sheets** - built dynamically from actual matches, such as cloud, payment, collaboration, development, and SaaS
+- **URL / API** - URL, API endpoint, and request context
+- **Databases & Connections** - JDBC, MongoDB, Redis, ES, and other connection information
+- **Password / Secret / Token** - passwords, generic secrets, and session or access tokens
+- **WeChat Ecosystem** - WeChat-related configuration
+- **Obfuscated Files** - file path, score, techniques, and restore state
+
+Each finding includes:
+- Content
+- Occurrence count
 - File path
+- Line number
+- Risk level
+
+Obfuscated-file entries additionally include:
+- Status (`restored` / `partial` / `flagged`)
 - Score
 - Techniques
-- Status: `restored`, `partial`, or `flagged`
-- Output tag: `[OBFUSCATED] ...`
+- Tag (`[OBFUSCATED] ...`)
 
-### API Extraction
+### Postman Collection Example
 
-- URLs and API endpoints are extracted from the same scan report
-- Relative paths remain unchanged
-- If the HTTP method cannot be inferred safely, it is exported as `UNKNOWN`
+```json
+{
+  "info": {
+    "name": "wx1234567890abcdef - API Collection"
+  },
+  "item": [
+    {
+      "name": "POST /api/user/login",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "/api/user/login"
+        }
+      }
+    }
+  ]
+}
+```
 
----
+### Rule Configuration
 
-## Rule Configuration
-
-- Built-in rules are enabled by default
-- The tool no longer auto-generates `config/rule.yaml`
-- If you manually provide `config/rule.yaml`, your custom rules override the built-in set
-
----
-
-## v2.7.0 Highlights
-
-- Postman Collection export
-- Default JavaScript deobfuscation
-- Obfuscated-file reporting in Excel / HTML
-- `scan-only` mode
-- `scan --verbose` and `all --verbose`
-- Safer unpacking with path validation, hard limits, and staged errors
-- Built-in rules enabled by default
-- Manual GitHub Actions triggers for CI and Release
-
-For the full release summary, see [RELEASE_NOTES.md](RELEASE_NOTES.md).
+- The built-in ruleset is used by default
+- The program does not auto-write `config/rule.yaml`
+- If you manually place `config/rule.yaml`, your custom rules override the built-in rules
+- This is suitable when you want to adjust audit scope without modifying source code
 
 ---
 
-## GitHub Actions
+## 📈 Performance Comparison (v2.7.1 vs v1.0)
 
-This repository includes two workflows:
-
-- `CI`
-  - Triggered by push to `main`, pull requests to `main`, or manual run
-  - Runs `go build` and `go test`
-- `Release`
-  - Triggered by version tags like `v2.7.0` or manual run
-  - Builds Windows, Linux, macOS Intel, and macOS Apple Silicon binaries
-  - Publishes them to GitHub Releases
+| Metric | v1.0 | v2.7.1 | Improvement |
+|--------|------|--------|-------------|
+| **Scan speed** | Baseline | +50-70% | Regex precompilation |
+| **False-positive control** | Basic regex-only scan | Multi-layer filtering | Blacklist + context + placeholder + weak-value filtering |
+| **Data volume** | 127,185 items | ~3,000 items | Deduplication + filtering |
+| **Output format** | JSON | Excel / HTML | Interactive reports |
+| **Concurrency** | Fixed 10 workers | CPU*2 dynamic | Adaptive concurrency |
+| **I/O performance** | Direct write | 256 KB buffer | Fewer system calls |
 
 ---
 
-## License
+## 🔄 Version History
+
+### v2.7.1 (2026-04-21) - Route Analysis Enhancements
+
+#### New
+- **Cross-page call-chain recovery** - writes page `handler -> local helper -> shared helper -> final navigation` chains into `route_manifest.json`
+- **Shared router helper detection** - identifies shared navigation wrappers such as `utils/router.js` and `common/nav.js`, with page usage, methods, and target hints
+
+#### Improved
+- **Route report upgrades** - `route_map.md` and `route_map.mmd` now display call-chain and shared-helper information
+- **Fallback edge pruning** - removes duplicate `UNKNOWN` fallback edges when a concrete navigation method has already been recovered
+
+### v2.7.0 (2026-04-18) - Major Feature Upgrade
+
+#### New
+- **Interactive HTML report**
+- **`scan-only` standalone mode**
+- **GitHub Actions integration**
+- **Windows AppName extraction**
+- **Expanded batch processing**
+- **Postman Collection export**
+- **Default JS deobfuscation**
+- **Obfuscated-file reporting**
+- **Cache-path diagnostics**
+- **Built-in rules by default**
+- **Rule category normalization**
+- **Stronger false-positive controls**
+
+### v2.6.0 (2026-03-17) - Stable Release
+
+#### New
+- Stability improvements
+- Ongoing rule optimization
+- Better Windows / macOS / Linux compatibility
+- Dependency updates
+
+#### Fixed
+- Subpackage handling issues in some cases
+- Excel report issues with special characters
+- Large Mini Program memory usage
+
+### v2.5.0 (2025-12-05) - Major Update
+
+#### New
+- Multi-sheet Excel reporting
+- Smarter false-positive filtering
+- Deduplication
+- Risk grading
+- Full context with file paths and line numbers
+
+#### Improved
+- Dynamic concurrency
+- Buffered I/O
+- Rule precompilation
+- Optimized build flags
+
+#### Fixed
+- Domain rules falsely matching file names
+- JavaScript APIs falsely treated as domains
+- Directory merge performance
+
+### v1.0.0 (2024-XX-XX)
+- Initial release
+- Basic unpacking
+- Code beautification
+- Sensitive-data scanning with JSON output
+
+---
+
+## 🛠️ Technical Architecture
+
+```text
+Gwxapkg/
+├── cmd/
+│   └── root.go           # CLI entry, progress, report generation
+├── internal/
+│   ├── cmd/              # command handling and file parsing
+│   ├── decrypt/          # AES + XOR decryption
+│   ├── unpack/           # wxapkg binary parsing
+│   ├── restore/          # project-structure restoration
+│   ├── formatter/        # beautification and JS deobfuscation
+│   │   ├── jsformatter.go
+│   │   └── deobfuscator.go
+│   ├── key/              # rule management and precompilation
+│   ├── scanner/          # scanning engine
+│   │   ├── types.go
+│   │   ├── rule_meta.go
+│   │   ├── filter.go
+│   │   ├── collector.go
+│   │   ├── scanner.go
+│   │   └── api_extractor.go
+│   ├── reporter/         # report generation
+│   │   ├── excel.go
+│   │   ├── html.go
+│   │   └── postman.go
+│   ├── config/           # configuration management
+│   └── ui/               # terminal UI
+├── config/
+│   └── rule.yaml         # optional custom override file
+└── main.go
+```
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome:
+
+1. Fork this repository
+2. Create a feature branch: `git checkout -b feature/AmazingFeature`
+3. Commit your changes: `git commit -m 'Add some AmazingFeature'`
+4. Push the branch: `git push origin feature/AmazingFeature`
+5. Open a Pull Request
+
+---
+
+## 📄 License
 
 This project is licensed under the MIT License. See [LICENSE](LICENSE).
+
+---
+
+## ❓ FAQ
+
+### 1. Why does it “flash close” when double-clicked?
+This is a command-line tool and should not be launched by double-clicking the executable.
+
+- Wrong: double-clicking `gwxapkg.exe`
+- Correct: open a terminal, `cd` into the tool directory, and run it from there
+
+### 2. Why can’t it find my Mini Program package?
+Make sure you have logged into desktop WeChat and opened the target Mini Program at least once. If it still cannot be found, run `scan` and verify whether the detected cache path is correct.
+
+---
+
+## 📩 Contact
+
+If you add on WeChat, please include the reason. Basic questions such as how to open a terminal or install Go will not be answered.
