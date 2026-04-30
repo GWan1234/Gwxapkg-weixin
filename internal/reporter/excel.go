@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/25smoking/Gwxapkg/internal/scanner"
 	"github.com/xuri/excelize/v2"
@@ -23,8 +24,12 @@ func NewExcelReporter() *ExcelReporter {
 
 // Generate 生成报告
 func (r *ExcelReporter) Generate(report *scanner.ScanReport, filename string) error {
+	usedSheetNames := map[string]struct{}{
+		"Sheet1": {},
+	}
+
 	// 1. 创建概览页
-	if err := r.createOverviewSheet(report); err != nil {
+	if err := r.createOverviewSheet(report, usedSheetNames); err != nil {
 		return fmt.Errorf("创建概览页失败: %w", err)
 	}
 
@@ -37,12 +42,12 @@ func (r *ExcelReporter) Generate(report *scanner.ScanReport, filename string) er
 
 	for _, category := range categories {
 		data := report.Categories[category]
-		if err := r.createCategorySheet(category, data); err != nil {
+		if err := r.createCategorySheet(category, data, usedSheetNames); err != nil {
 			return fmt.Errorf("创建分类页 %s 失败: %w", category, err)
 		}
 	}
 
-	if err := r.createObfuscatedSheet(report); err != nil {
+	if err := r.createObfuscatedSheet(report, usedSheetNames); err != nil {
 		return fmt.Errorf("创建混淆文件页失败: %w", err)
 	}
 
@@ -61,8 +66,8 @@ func (r *ExcelReporter) Generate(report *scanner.ScanReport, filename string) er
 }
 
 // createOverviewSheet 创建概览页
-func (r *ExcelReporter) createOverviewSheet(report *scanner.ScanReport) error {
-	sheet := "概览"
+func (r *ExcelReporter) createOverviewSheet(report *scanner.ScanReport, usedSheetNames map[string]struct{}) error {
+	sheet := safeExcelSheetName("概览", "概览", usedSheetNames)
 	index, err := r.file.NewSheet(sheet)
 	if err != nil {
 		return err
@@ -114,7 +119,10 @@ func (r *ExcelReporter) createOverviewSheet(report *scanner.ScanReport) error {
 		r.file.SetCellValue(sheet, fmt.Sprintf("A%d", row), categoryName)
 		r.file.SetCellValue(sheet, fmt.Sprintf("B%d", row), count)
 
-		percentage := float64(count) / float64(totalUnique) * 100
+		percentage := 0.0
+		if totalUnique > 0 {
+			percentage = float64(count) / float64(totalUnique) * 100
+		}
 		r.file.SetCellValue(sheet, fmt.Sprintf("C%d", row), fmt.Sprintf("%.1f%%", percentage))
 		row++
 	}
@@ -127,13 +135,8 @@ func (r *ExcelReporter) createOverviewSheet(report *scanner.ScanReport) error {
 }
 
 // createCategorySheet 创建分类页
-func (r *ExcelReporter) createCategorySheet(category string, data *scanner.CategoryData) error {
-	sheetName := data.Name
-
-	// Excel sheet 名称不能超过 31 字符
-	if len(sheetName) > 31 {
-		sheetName = sheetName[:31]
-	}
+func (r *ExcelReporter) createCategorySheet(category string, data *scanner.CategoryData, usedSheetNames map[string]struct{}) error {
+	sheetName := safeExcelSheetName(data.Name, category, usedSheetNames)
 
 	_, err := r.file.NewSheet(sheetName)
 	if err != nil {
@@ -189,8 +192,8 @@ func (r *ExcelReporter) createCategorySheet(category string, data *scanner.Categ
 	return nil
 }
 
-func (r *ExcelReporter) createObfuscatedSheet(report *scanner.ScanReport) error {
-	sheetName := "混淆文件"
+func (r *ExcelReporter) createObfuscatedSheet(report *scanner.ScanReport, usedSheetNames map[string]struct{}) error {
+	sheetName := safeExcelSheetName("混淆文件", "混淆文件", usedSheetNames)
 	if _, err := r.file.NewSheet(sheetName); err != nil {
 		return err
 	}
@@ -218,6 +221,54 @@ func (r *ExcelReporter) createObfuscatedSheet(report *scanner.ScanReport) error 
 	r.file.SetColWidth(sheetName, "F", "F", 52)
 
 	return nil
+}
+
+func safeExcelSheetName(name, fallback string, used map[string]struct{}) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = strings.TrimSpace(fallback)
+	}
+	if name == "" {
+		name = "Sheet"
+	}
+
+	replacer := strings.NewReplacer(
+		":", "_",
+		"\\", "_",
+		"/", "_",
+		"?", "_",
+		"*", "_",
+		"[", "_",
+		"]", "_",
+	)
+	name = replacer.Replace(name)
+	name = strings.Join(strings.Fields(name), " ")
+	name = strings.Trim(name, "'")
+	if name == "" {
+		name = "Sheet"
+	}
+
+	base := truncateSheetName(name, 31)
+	candidate := base
+	for index := 1; ; index++ {
+		if _, exists := used[candidate]; !exists {
+			used[candidate] = struct{}{}
+			return candidate
+		}
+		suffix := fmt.Sprintf("_%d", index)
+		candidate = truncateSheetName(base, 31-utf8.RuneCountInString(suffix)) + suffix
+	}
+}
+
+func truncateSheetName(name string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	if utf8.RuneCountInString(name) <= maxRunes {
+		return name
+	}
+	runes := []rune(name)
+	return string(runes[:maxRunes])
 }
 
 // applyStyles 应用样式

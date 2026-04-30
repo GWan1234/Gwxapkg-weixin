@@ -384,15 +384,18 @@ output/
 
 ## 🔄 バージョン更新
 
-### v2.7.2 (2026-04-29) - 反難読化の安定性修正
+### v2.7.2 (2026-04-30) - 安定性とレポート生成の修正
 
 #### 修正
 - `all` 実行中に HTML の `<script>` 内 JavaScript を反難読化する際、`nil pointer dereference` で全体がクラッシュする可能性がある問題を修正
 - `goja` AST の走査と変数宣言検出を強化し、不完全な `VariableStatement`、`Binding`、typed nil ノードを安全に扱うよう改善
+- `\x22`、`\u0022` などのエスケープを静的デコードした後も JavaScript の文字列構文が壊れないよう修正
+- Excel の sheet 名に使えない文字を含むカテゴリ名で `.xlsx` レポート生成が失敗する問題を修正
+- WXML 復元で `virtual` ノードを展開し、動的レンダリング分岐向けの安全なフォールバック引数を追加
 - 単一の JavaScript 断片で反難読化分析に失敗しても、元の内容を保持して解包処理を継続するよう改善
 
 #### 検証
-- JavaScript 分析 panic、HTML 内蔵 script panic、不完全 AST ノードを対象に formatter 回帰テストを追加
+- JavaScript 分析 panic、HTML 内蔵 script panic、不完全 AST ノード、Excel sheet 名の安全化、WXML virtual ノード展開を対象に formatter / reporter / unpack 回帰テストを追加
 - `go test ./...` と Windows amd64 クロスコンパイルで検証済み
 
 ### v2.7.1 (2026-04-21) - ルート解析強化

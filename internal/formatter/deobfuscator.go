@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dop251/goja"
 	"github.com/dop251/goja/ast"
@@ -225,7 +226,7 @@ func decodeStaticJavaScript(source string) (string, []string, bool) {
 			if ch == '\\' && i+1 < len(source) {
 				if source[i+1] == 'x' && i+3 < len(source) {
 					if decoded, ok := decodeEscapedHex(source[i+2 : i+4]); ok {
-						out.WriteRune(decoded)
+						writeEscapedStringRune(&out, decoded, currentStringQuote(inSingle, inDouble, inTemplate))
 						i += 4
 						changed = true
 						techniques = append(techniques, "hex-literal")
@@ -234,7 +235,7 @@ func decodeStaticJavaScript(source string) (string, []string, bool) {
 				}
 				if source[i+1] == 'u' && i+5 < len(source) {
 					if decoded, ok := decodeEscapedUnicode(source[i+2 : i+6]); ok {
-						out.WriteRune(decoded)
+						writeEscapedStringRune(&out, decoded, currentStringQuote(inSingle, inDouble, inTemplate))
 						i += 6
 						changed = true
 						techniques = append(techniques, "unicode-literal")
@@ -310,6 +311,53 @@ func decodeEscapedUnicode(value string) (rune, bool) {
 		return 0, false
 	}
 	return rune(parsed), true
+}
+
+func currentStringQuote(inSingle, inDouble, inTemplate bool) byte {
+	switch {
+	case inSingle:
+		return '\''
+	case inDouble:
+		return '"'
+	case inTemplate:
+		return '`'
+	default:
+		return 0
+	}
+}
+
+func writeEscapedStringRune(out *strings.Builder, value rune, quote byte) {
+	switch value {
+	case '\\':
+		out.WriteString(`\\`)
+	case '\n':
+		out.WriteString(`\n`)
+	case '\r':
+		out.WriteString(`\r`)
+	case '\t':
+		out.WriteString(`\t`)
+	case '\b':
+		out.WriteString(`\b`)
+	case '\f':
+		out.WriteString(`\f`)
+	case '\v':
+		out.WriteString(`\v`)
+	case 0:
+		out.WriteString(`\x00`)
+	case rune(quote):
+		out.WriteByte('\\')
+		out.WriteRune(value)
+	case '\u2028':
+		out.WriteString(`\u2028`)
+	case '\u2029':
+		out.WriteString(`\u2029`)
+	default:
+		if value < 0x20 || value == utf8.RuneError {
+			out.WriteString(fmt.Sprintf(`\u%04x`, value))
+			return
+		}
+		out.WriteRune(value)
+	}
 }
 
 func isHexDigit(ch byte) bool {

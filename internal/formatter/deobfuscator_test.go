@@ -2,9 +2,11 @@ package formatter
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/dop251/goja/ast"
+	"github.com/dop251/goja/parser"
 )
 
 func TestAnalyzeJavaScriptRecoversPanic(t *testing.T) {
@@ -30,6 +32,24 @@ func TestAnalyzeJavaScriptRecoversPanic(t *testing.T) {
 	}
 	if result.Status != "skipped" {
 		t.Fatalf("panic 后状态应为 skipped，got %q", result.Status)
+	}
+}
+
+func TestAnalyzeJavaScriptKeepsDecodedStringEscapesValid(t *testing.T) {
+	input := []byte(`var css = "format(\x22truetype\x22);content:\u0022\\e600\u0022";`)
+	result, err := AnalyzeJavaScript(input, "app-wxss.js")
+	if err != nil {
+		t.Fatalf("AnalyzeJavaScript 返回错误: %v", err)
+	}
+	if _, err := parser.ParseFile(nil, "", string(result.Content), 0); err != nil {
+		t.Fatalf("解码后的 JavaScript 不应破坏语法: %v\n%s", err, result.Content)
+	}
+	output := string(result.Content)
+	if !strings.Contains(output, `format(\"truetype\")`) {
+		t.Fatalf("字符串内部引号应保持转义，got %q", output)
+	}
+	if !strings.Contains(output, `content:\"\\e600\"`) {
+		t.Fatalf("字符串内部反斜杠与引号应保持转义，got %q", output)
 	}
 }
 

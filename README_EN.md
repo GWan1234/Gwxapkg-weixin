@@ -384,15 +384,18 @@ Obfuscated-file entries additionally include:
 
 ## 🔄 Version History
 
-### v2.7.2 (2026-04-29) - Deobfuscation Stability Fix
+### v2.7.2 (2026-04-30) - Stability and Report Fixes
 
 #### Fixed
 - Fixed a `nil pointer dereference` crash that could occur while deobfuscating JavaScript embedded in HTML `<script>` blocks during `all`
 - Hardened `goja` AST traversal and variable-declaration detection against incomplete `VariableStatement`, `Binding`, and typed nil nodes
+- Fixed static deobfuscation of `\x22`, `\u0022`, and similar escapes so decoded string content does not break JavaScript syntax
+- Fixed `.xlsx` report generation when category names contain illegal Excel sheet characters
+- Improved WXML restoration by unwrapping `virtual` nodes and trying safer fallback render arguments for dynamic branches
 - If one JavaScript fragment fails deobfuscation analysis, Gwxapkg now keeps the original content and continues unpacking the package
 
 #### Verified
-- Added formatter regression tests for JavaScript analysis panics, HTML embedded-script panics, and incomplete AST nodes
+- Added formatter, reporter, and unpack regression tests for JavaScript analysis panics, HTML embedded-script panics, incomplete AST nodes, Excel sheet-name sanitization, and WXML virtual-node unwrapping
 - Verified with `go test ./...` and Windows amd64 cross-compilation
 
 ### v2.7.1 (2026-04-21) - Route Analysis Enhancements

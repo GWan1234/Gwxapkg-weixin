@@ -384,15 +384,18 @@ output/
 
 ## 🔄 版本更新
 
-### v2.7.2 (2026-04-29) - 🛡️ 反混淆稳定性修复
+### v2.7.2 (2026-04-30) - 🛡️ 稳定性与报告修复
 
 #### 🔧 修复
 - 修复 HTML 内嵌 `<script>` 在 JS 反混淆分析阶段可能触发 `nil pointer dereference` 并导致 `all` 命令整体崩溃的问题
 - 强化 `goja` AST 遍历与变量声明识别的空节点防护，覆盖不完整 `VariableStatement`、`Binding`、typed nil 节点等边界情况
+- 修复反混淆静态解码 `\x22`、`\u0022` 等字符串转义后可能破坏 JS 语法的问题
+- 修复 Excel 报告分类名包含非法 sheet 字符时 `.xlsx` 生成失败的问题
+- 改进 WXML 还原，跳过 `virtual` 虚拟节点并为动态渲染分支增加兜底参数
 - 当单个 JS 片段反混淆分析异常时，会保留原始内容并继续解包，避免异常样本中断整包处理
 
 #### ✅ 验证
-- 新增 formatter 回归测试，覆盖 JS 分析 panic、HTML 内嵌脚本 panic 与异常 AST 节点
+- 新增 formatter、reporter、unpack 回归测试，覆盖 JS 分析 panic、HTML 内嵌脚本 panic、异常 AST 节点、Excel sheet 名清洗与 WXML 虚拟节点展开
 - 已验证 `go test ./...` 与 Windows amd64 交叉编译
 
 ### v2.7.1 (2026-04-21) - 🧭 路由分析增强

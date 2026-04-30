@@ -49,6 +49,10 @@ func extractFuncNameAndArgs(gencode string) (string, []interface{}) {
 
 // 递归调用函数直到获得非函数结果
 func getFinalResult(vm *goja.Runtime, value goja.Value) (goja.Value, error) {
+	return getFinalResultWithArgs(vm, value)
+}
+
+func getFinalResultWithArgs(vm *goja.Runtime, value goja.Value, args ...goja.Value) (goja.Value, error) {
 	for value.ExportType().Kind() == reflect.Func {
 		fn, ok := goja.AssertFunction(value)
 		if !ok {
@@ -56,12 +60,76 @@ func getFinalResult(vm *goja.Runtime, value goja.Value) (goja.Value, error) {
 		}
 
 		var err error
-		value, err = fn(goja.Undefined())
+		value, err = fn(goja.Undefined(), args...)
 		if err != nil {
 			return nil, err
 		}
+		args = nil
 	}
 	return value, nil
+}
+
+func mockWXMLData(vm *goja.Runtime, overrides map[string]bool) goja.Value {
+	obj := vm.NewObject()
+	for ch := 'a'; ch <= 'z'; ch++ {
+		_ = obj.Set(string(ch), true)
+	}
+	for ch := 'A'; ch <= 'Z'; ch++ {
+		_ = obj.Set(string(ch), true)
+	}
+	_ = obj.Set("d", vm.NewObject())
+	_ = obj.Set("length", 1)
+
+	for key, value := range overrides {
+		_ = obj.Set(key, value)
+	}
+
+	return obj
+}
+
+func wxmlRenderArgVariants(vm *goja.Runtime) [][]goja.Value {
+	return [][]goja.Value{
+		{
+			mockWXMLData(vm, map[string]bool{"c": false, "f": false}),
+			vm.NewObject(),
+			vm.NewObject(),
+		},
+		{
+			mockWXMLData(vm, nil),
+			vm.NewObject(),
+			vm.NewObject(),
+		},
+	}
+}
+
+func mockWXMLListData(vm *goja.Runtime) goja.Value {
+	obj := vm.NewObject()
+	item := vm.NewObject()
+	for _, key := range []string{"a", "b", "c", "d", "e", "f", "id", "name", "type", "time", "address"} {
+		_ = item.Set(key, key)
+	}
+	list := vm.NewArray(item)
+
+	for ch := 'a'; ch <= 'z'; ch++ {
+		_ = obj.Set(string(ch), list)
+	}
+	for ch := 'A'; ch <= 'Z'; ch++ {
+		_ = obj.Set(string(ch), list)
+	}
+	_ = obj.Set("d", vm.NewObject())
+	_ = obj.Set("length", 1)
+
+	return obj
+}
+
+func wxmlListRenderArgVariants(vm *goja.Runtime) [][]goja.Value {
+	return [][]goja.Value{
+		{
+			mockWXMLListData(vm),
+			vm.NewObject(),
+			vm.NewObject(),
+		},
+	}
 }
 
 // 生成视图代码
@@ -80,9 +148,10 @@ func getDomTree(node interface{}) string {
 			return ""
 		}
 		tag = strings.TrimPrefix(tag, "wx-") // 去除前缀 wx-
+		isVirtual := tag == "virtual"
 
-		// 如果是根节点，不添加开始标签
-		if !isRoot {
+		// 如果是根节点或虚拟节点，不添加开始标签
+		if !isRoot && !isVirtual {
 			// 开始标签
 			sb.WriteString(indent)
 			sb.WriteString("<")
@@ -109,17 +178,25 @@ func getDomTree(node interface{}) string {
 
 		// 处理子节点
 		if children, ok := node["children"].([]interface{}); ok {
-			if len(children) > 0 && !isRoot {
+			if len(children) > 0 && !isRoot && !isVirtual {
 				sb.WriteString("\n")
 			}
 			for _, child := range children {
 				if childMap, ok := child.(map[string]interface{}); ok {
-					sb.WriteString(processNodes(childMap, indentLevel+1, false))
+					childIndent := indentLevel + 1
+					if isRoot || isVirtual {
+						childIndent = indentLevel
+					}
+					sb.WriteString(processNodes(childMap, childIndent, false))
 				} else {
 					// 如果 children 是字符串且字符串为空，则不换行
 					if str, ok := child.(string); ok {
 						if str != "" {
-							sb.WriteString(strings.Repeat("\t", indentLevel+1))
+							textIndent := indentLevel + 1
+							if isRoot || isVirtual {
+								textIndent = indentLevel
+							}
+							sb.WriteString(strings.Repeat("\t", textIndent))
 							sb.WriteString(str + "\n")
 						}
 					}
@@ -127,8 +204,8 @@ func getDomTree(node interface{}) string {
 			}
 		}
 
-		// 结束标签（如果不是根节点）
-		if !isRoot {
+		// 结束标签（如果不是根节点或虚拟节点）
+		if !isRoot && !isVirtual {
 			sb.WriteString(indent)
 			sb.WriteString("</")
 			sb.WriteString(tag)
@@ -148,7 +225,7 @@ func getDomTree(node interface{}) string {
 	return processNodes(rootNode, 0, true)
 }
 
-func getXml(path string, scriptCode, gencode string, results chan<- map[string]interface{}, wg *sync.WaitGroup, version string, sem chan struct{}) {
+func getXml(path string, scriptCode, gencode string, results chan<- map[string]string, wg *sync.WaitGroup, version string, sem chan struct{}) {
 	defer wg.Done()
 
 	// 限制并发数
@@ -239,12 +316,32 @@ func getXml(path string, scriptCode, gencode string, results chan<- map[string]i
 		return
 	}
 
-	// 获取最终结果
-	exported := finalResult.Export()
-	_ = exported // 静默处理
+	bestContent := getDomTree(finalResult.Export())
+	for _, args := range wxmlRenderArgVariants(vm) {
+		candidate, err := getFinalResultWithArgs(vm, result, args...)
+		if err != nil {
+			continue
+		}
+		content := getDomTree(candidate.Export())
+		if len(strings.TrimSpace(content)) > len(strings.TrimSpace(bestContent)) {
+			bestContent = content
+		}
+	}
+	if strings.TrimSpace(bestContent) == "" {
+		for _, args := range wxmlListRenderArgVariants(vm) {
+			candidate, err := getFinalResultWithArgs(vm, result, args...)
+			if err != nil {
+				continue
+			}
+			content := getDomTree(candidate.Export())
+			if len(strings.TrimSpace(content)) > len(strings.TrimSpace(bestContent)) {
+				bestContent = content
+			}
+		}
+	}
 
 	// 保存结果
-	results <- map[string]interface{}{path: finalResult.Export()}
+	results <- map[string]string{path: bestContent}
 }
 
 func (p *XmlParser) Parse(option config.WxapkgInfo) error {
@@ -253,7 +350,7 @@ func (p *XmlParser) Parse(option config.WxapkgInfo) error {
 	var frameFile = option.Option.ViewSource
 	// 存放生成函数代码
 	var gwx = make(map[string]interface{})
-	results := make(chan map[string]interface{})
+	results := make(chan map[string]string)
 	var wg sync.WaitGroup
 
 	// 最大并发数
@@ -305,7 +402,7 @@ var setCssToHead=function(file,_xcInvalid,info){return ()=>{}};`
 	finalResults := make(map[string]string)
 	for result := range results {
 		for k, v := range result {
-			finalResults[k] = getDomTree(v)
+			finalResults[k] = v
 		}
 	}
 
