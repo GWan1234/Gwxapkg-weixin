@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-2.7.3-blue.svg)
+![Version](https://img.shields.io/badge/version-2.7.4-blue.svg)
 ![Go Version](https://img.shields.io/badge/go-%3E%3D1.21-00ADD8.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)
@@ -129,14 +129,20 @@ go run . -h
 ### 基本用法
 
 ```bash
-# 自动扫描并处理指定 AppID 的小程序
+# 自动扫描并处理指定 AppID 的小程序；默认会自动检测分包完整性
 ./gwxapkg all -id=<AppID>
 
 # 查看所有可用的小程序
 ./gwxapkg scan
 
+# 交互选择小程序，并在缺分包时只监听微信缓存，不执行解包
+./gwxapkg scan -watch
+
 # 查看微信缓存候选路径诊断
 ./gwxapkg scan --verbose
+
+# 指定 AppID 并只监听缺失分包下载
+./gwxapkg all -id=<AppID> -watch
 
 # 解包单个 wxapkg 文件
 ./gwxapkg -id=<AppID> -in=<文件路径>
@@ -168,10 +174,10 @@ go run . -h
 
 ```bash
 # 示例1: 自动扫描并处理
-./gwxapkg all -id=wx3c19e32cb8f31289
+./gwxapkg all -id=WX_DEMO_APPID
 
 # 示例2: 解包并导出 Postman Collection
-./gwxapkg all -id=wx3c19e32cb8f31289 -postman
+./gwxapkg all -id=WX_DEMO_APPID -postman
 
 # 示例3: 仅解包单个文件
 ./gwxapkg -id=wx123456 -in=test.wxapkg -out=./output
@@ -194,24 +200,28 @@ go run . -h
 示例：
 
 ```text
-/Applications/Gwxapkg/output/wx1234567890abcdef
-./output/wx1234567890abcdef
+/Applications/Gwxapkg/output/WX_DEMO_APPID
+./output/WX_DEMO_APPID
 ```
 
 ### 典型输出结构
 
 ```text
 output/
-└── wx1234567890abcdef/
+└── WX_DEMO_APPID/
     ├── app.js
     ├── page-frame.html
+    ├── sensitive_report.json
     ├── sensitive_report.xlsx
     ├── sensitive_report.html
     ├── api_collection.postman_collection.json
     ├── route_manifest.json
     ├── route_map.md
     ├── route_map.mmd
-    └── .gwxapkg/                   # 仅在 -workspace=true 时生成
+    └── .gwxapkg/
+        ├── api_endpoint_map.json
+        ├── api_endpoint_map.md
+        └── ...                      # semantic / AST / API 调用链产物
 ```
 
 ---
@@ -282,7 +292,8 @@ output/
 
 ### 扫描与导出行为
 
-- `-sensitive=true` 时生成 `sensitive_report.xlsx` 和 `sensitive_report.html`
+- `-sensitive=true` 时生成 `sensitive_report.json`、`sensitive_report.xlsx` 和 `sensitive_report.html`
+- 只要扫描到通用接口线索，就生成 `.gwxapkg/api_endpoint_map.json` 和 `.gwxapkg/api_endpoint_map.md`
 - `-postman=true` 时生成 `api_collection.postman_collection.json`
 - `-postman` 与 `-sensitive` 解耦，可以单独开启
 - `scan-only` 会复用同一套扫描器与 JS 反混淆逻辑
@@ -347,7 +358,7 @@ output/
 ```json
 {
   "info": {
-    "name": "wx1234567890abcdef - API Collection"
+    "name": "WX_DEMO_APPID - API Collection"
   },
   "item": [
     {
@@ -372,20 +383,36 @@ output/
 
 ---
 
-## 📈 性能对比（v2.7.3 vs v1.0）
+## 📈 性能对比（v2.7.4 vs v1.0）
 
-| 指标 | v1.0 | v2.7.3 | 改进 |
+| 指标 | v1.0 | v2.7.4 | 改进 |
 |------|------|--------|------|
 | **扫描速度** | 基准 | +50-70% | ⬆️⬆️⬆️ 规则预编译 |
 | **误报控制** | 基础正则直扫 | 多层过滤收敛 | ✅ 黑名单 + 上下文 + 占位符 + 弱值过滤 |  
 | **数据量** | 127,185条 | ~3,000条 | ⬇️⬇️⬇️ 去重+过滤 |
-| **输出格式** | JSON | Excel/HTML | ✅ 交互式报告 |
+| **输出格式** | JSON | JSON/Excel/HTML | ✅ 机器可读 + 交互式报告 |
 | **并发性能** | 10固定 | CPU*2动态 | ⬆️⬆️ 自适应 |
 | **I/O性能** | 直接写入 | 256KB缓冲 | ⬆️⬆️ 减少系统调用 |
 
 ---
 
 ## 🔄 版本更新
+
+### v2.7.4 (2026-05-15) - 🤖 Gwxapkg AI 审计 Skill、JSON 证据包与分包完整性检测
+
+#### 🆕 新增功能
+- 新增 `skills/gwxapkg-ai-audit`，可安装到 Hermes / Codex / Claude Code 等 LLM Agent，用于对 Gwxapkg 解包目录做证据驱动的本地静态安全审计
+- 新增机器可读 `sensitive_report.json`，与 Excel / HTML 报告同步生成，便于 LLM 消费、自动关联和审计留痕
+- 新增 `.gwxapkg/api_endpoint_map.json/.md`，当语义 `api_map` 无法覆盖 Taro/webpack URL/request 风格接口时，提供通用 API fallback
+- 新增 `.gwxapkg/package_completeness.json/.md`，每次 `scan` / `all` / `scan-only` 自动判断当前输出是否缺失分包、占位页面和真实源码覆盖情况
+- `scan -watch` 与 `all -id=<AppID> -watch` 支持纯监听微信缓存目录；微信客户端下载新分包后只提示捕获，不自动解包，退出后再运行普通 `scan` / `all` 合并源码
+- `scan-only -format` 新增 `json`，默认 `both` 会同时生成 JSON、Excel、HTML
+
+#### 🔧 改进
+- HTML 敏感信息报告顶部新增“当前解包结果是否完整”的提示，避免把缺失分包生成的占位页面误认为真实源码
+- 路由分析和二次扫描会跳过 `sensitive_report.json`，避免生成报告被再次当作源码扫描
+- 更新 Hermes skill 安装材料，内置 API 鉴权、加密数据流、Burp 关联、覆盖缺口和报告汇总等角色提示词
+- AI 审计 skill 默认生成本地完整证据报告，不主动脱敏；只有用户明确要求对外脱敏版时才另存脱敏副本
 
 ### v2.7.3 (2026-05-12) - 🧠 Semantic 与 AST 深度还原增强
 

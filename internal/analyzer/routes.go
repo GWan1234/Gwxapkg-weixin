@@ -1403,6 +1403,7 @@ func shouldIgnoreGeneratedArtifact(relPath string) bool {
 	switch name {
 	case "sensitive_report.html",
 		"sensitive_report.xlsx",
+		"sensitive_report.json",
 		"api_collection.postman_collection.json",
 		"route_manifest.json",
 		"route_map.md",

@@ -10,6 +10,7 @@ import (
 	"github.com/25smoking/Gwxapkg/internal/analyzer"
 	"github.com/25smoking/Gwxapkg/internal/formatter"
 	"github.com/25smoking/Gwxapkg/internal/key"
+	"github.com/25smoking/Gwxapkg/internal/packagecheck"
 	"github.com/25smoking/Gwxapkg/internal/reporter"
 	"github.com/25smoking/Gwxapkg/internal/scanner"
 	"github.com/25smoking/Gwxapkg/internal/ui"
@@ -100,15 +101,58 @@ func ScanOnly(dir string, appID string, format string, outputDir string, postman
 		return
 	}
 
+	if completeness, err := packagecheck.AnalyzeAndWrite(dir, appID, nil); err != nil {
+		ui.Warning("分包完整性检测失败: %v", err)
+	} else if completeness != nil && completeness.Status != packagecheck.StatusUnknown {
+		if filepath.Clean(outputDir) != filepath.Clean(dir) {
+			if err := packagecheck.WriteReport(outputDir, completeness); err != nil {
+				ui.Warning("复制分包完整性报告到输出目录失败: %v", err)
+			}
+		}
+		if completeness.IsPartial() {
+			ui.Warning("分包完整性: partial（已找到 %d/%d 个分包，缺失 %d 个，占位页面 %d 个）",
+				completeness.FoundSubpackageCount,
+				completeness.DeclaredSubpackageCount,
+				completeness.MissingSubpackageCount,
+				completeness.PlaceholderPageCount,
+			)
+		} else if completeness.IsFull() {
+			ui.Success("分包完整性: full（已找到 %d/%d 个分包）",
+				completeness.FoundSubpackageCount,
+				completeness.DeclaredSubpackageCount,
+			)
+		}
+	}
+
 	ui.Step(2, 2, "生成报告...")
 
-	// 生成报告（支持 excel / html / both）
+	if len(report.APIEndpoints) > 0 {
+		apiEndpointMapReporter := reporter.NewAPIEndpointMapReporter()
+		artifacts, err := apiEndpointMapReporter.Generate(report, dir, outputDir)
+		if err != nil {
+			ui.Warning("生成通用 API Endpoint 地图失败: %v", err)
+		} else {
+			ui.Success("通用 API Endpoint 地图: %s", artifacts.MarkdownPath)
+		}
+	}
+
+	// 生成报告（支持 json / excel / html / both）
 	format = strings.ToLower(format)
 	if format == "" {
 		format = "both"
 	}
 
 	generated := 0
+	if format == "json" || format == "both" {
+		path := filepath.Join(outputDir, "sensitive_report.json")
+		jr := reporter.NewJSONReporter()
+		if err := jr.Generate(report, path); err != nil {
+			ui.Warning("生成 JSON 报告失败: %v", err)
+		} else {
+			ui.Success("JSON 报告: %s", path)
+			generated++
+		}
+	}
 	if format == "excel" || format == "both" {
 		path := filepath.Join(outputDir, "sensitive_report.xlsx")
 		er := reporter.NewExcelReporter()
@@ -165,7 +209,7 @@ func ScanOnly(dir string, appID string, format string, outputDir string, postman
 	key.ResetCollector()
 
 	if generated == 0 && !postman {
-		ui.Warning("未生成任何报告，请检查 -format 参数（excel/html/both）")
+		ui.Warning("未生成任何报告，请检查 -format 参数（json/excel/html/both）")
 		return
 	}
 
@@ -199,6 +243,7 @@ func shouldSkipGeneratedArtifact(relPath string) bool {
 	switch name {
 	case "sensitive_report.html",
 		"sensitive_report.xlsx",
+		"sensitive_report.json",
 		"api_collection.postman_collection.json",
 		"route_manifest.json",
 		"route_map.md",

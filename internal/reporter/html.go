@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"html/template"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/25smoking/Gwxapkg/internal/packagecheck"
 	"github.com/25smoking/Gwxapkg/internal/scanner"
 )
 
@@ -54,7 +56,7 @@ func (r *HTMLReporter) Generate(report *scanner.ScanReport, filename string) err
 	}
 
 	// 构建渲染数据
-	data := buildHTMLData(report)
+	data := buildHTMLData(report, filename)
 
 	f, err := os.Create(filename)
 	if err != nil {
@@ -81,7 +83,11 @@ type HTMLData struct {
 	ObfuscatedCount int
 	Categories      []HTMLCategory
 	AllItems        []HTMLItem
+	HighItems       []HTMLItem
+	MediumItems     []HTMLItem
+	LowItems        []HTMLItem
 	ObfuscatedFiles []HTMLObfuscated
+	PackageStatus   *HTMLPackageStatus
 }
 
 type HTMLCategory struct {
@@ -109,7 +115,19 @@ type HTMLObfuscated struct {
 	Tag        string
 }
 
-func buildHTMLData(report *scanner.ScanReport) HTMLData {
+type HTMLPackageStatus struct {
+	Status                  string
+	DeclaredSubpackageCount int
+	FoundSubpackageCount    int
+	MissingSubpackageCount  int
+	DeclaredPageCount       int
+	RealPageCount           int
+	PlaceholderPageCount    int
+	MissingPageCount        int
+	ReportPath              string
+}
+
+func buildHTMLData(report *scanner.ScanReport, filename string) HTMLData {
 	data := HTMLData{
 		AppID:           report.AppID,
 		ScanTime:        report.ScanTime,
@@ -121,6 +139,7 @@ func buildHTMLData(report *scanner.ScanReport) HTMLData {
 		LowRisk:         report.Summary.LowRisk,
 		ObfuscatedCount: len(report.ObfuscatedFiles),
 	}
+	data.PackageStatus = loadHTMLPackageStatus(filepath.Dir(filename))
 
 	// 构建分类数据
 	var catKeys []string
@@ -129,15 +148,17 @@ func buildHTMLData(report *scanner.ScanReport) HTMLData {
 	}
 	sort.Strings(catKeys)
 
-	// 构建 content -> confidence 映射（从 Items）
+	// 构建 category/content -> confidence 映射（从 Items）。
+	// 注意：CategoryData.Items 只按 content 聚合，RuleID 不在分类里；
+	// 这里必须用 item.Category，而不是 item.RuleID，否则 HTML 里高危会被误判为低危。
 	confidenceMap := make(map[string]string)
+	contentConfidenceMap := make(map[string]string)
 	contextMap := make(map[string]string)
-	catMap := make(map[string]string)
 	for _, item := range report.Items {
-		key := item.RuleID + ":" + item.Content
-		confidenceMap[key] = item.Confidence
+		key := item.Category + ":" + item.Content
+		confidenceMap[key] = maxConfidence(confidenceMap[key], item.Confidence)
+		contentConfidenceMap[item.Content] = maxConfidence(contentConfidenceMap[item.Content], item.Confidence)
 		contextMap[key] = strings.TrimSpace(item.Context)
-		catMap[item.Content] = item.Category
 	}
 
 	for _, k := range catKeys {
@@ -164,6 +185,9 @@ func buildHTMLData(report *scanner.ScanReport) HTMLData {
 			}
 			conf := confidenceMap[k+":"+content]
 			if conf == "" {
+				conf = contentConfidenceMap[content]
+			}
+			if conf == "" {
 				conf = "low"
 			}
 			item := HTMLItem{
@@ -177,9 +201,22 @@ func buildHTMLData(report *scanner.ScanReport) HTMLData {
 			}
 			cat.Items = append(cat.Items, item)
 			data.AllItems = append(data.AllItems, item)
+			switch item.Confidence {
+			case "high":
+				data.HighItems = append(data.HighItems, item)
+			case "medium":
+				data.MediumItems = append(data.MediumItems, item)
+			default:
+				data.LowItems = append(data.LowItems, item)
+			}
 		}
+		sortHTMLItems(cat.Items)
 		data.Categories = append(data.Categories, cat)
 	}
+	sortHTMLItems(data.AllItems)
+	sortHTMLItems(data.HighItems)
+	sortHTMLItems(data.MediumItems)
+	sortHTMLItems(data.LowItems)
 
 	for _, file := range report.ObfuscatedFiles {
 		data.ObfuscatedFiles = append(data.ObfuscatedFiles, HTMLObfuscated{
@@ -192,6 +229,64 @@ func buildHTMLData(report *scanner.ScanReport) HTMLData {
 	}
 
 	return data
+}
+
+func loadHTMLPackageStatus(rootDir string) *HTMLPackageStatus {
+	report, err := packagecheck.ReadReport(rootDir)
+	if err != nil || report == nil || report.Status == packagecheck.StatusUnknown {
+		return nil
+	}
+	return &HTMLPackageStatus{
+		Status:                  report.Status,
+		DeclaredSubpackageCount: report.DeclaredSubpackageCount,
+		FoundSubpackageCount:    report.FoundSubpackageCount,
+		MissingSubpackageCount:  report.MissingSubpackageCount,
+		DeclaredPageCount:       report.DeclaredPageCount,
+		RealPageCount:           report.RealPageCount,
+		PlaceholderPageCount:    report.PlaceholderPageCount,
+		MissingPageCount:        report.MissingPageCount,
+		ReportPath:              ".gwxapkg/package_completeness.md",
+	}
+}
+
+func maxConfidence(current, next string) string {
+	if riskRank(next) > riskRank(current) {
+		return next
+	}
+	return current
+}
+
+func sortHTMLItems(items []HTMLItem) {
+	sort.SliceStable(items, func(i, j int) bool {
+		leftRank := riskRank(items[i].Confidence)
+		rightRank := riskRank(items[j].Confidence)
+		if leftRank != rightRank {
+			return leftRank > rightRank
+		}
+		if items[i].Category != items[j].Category {
+			return items[i].Category < items[j].Category
+		}
+		if items[i].FilePath != items[j].FilePath {
+			return items[i].FilePath < items[j].FilePath
+		}
+		if items[i].LineNumber != items[j].LineNumber {
+			return items[i].LineNumber < items[j].LineNumber
+		}
+		return items[i].Content < items[j].Content
+	})
+}
+
+func riskRank(confidence string) int {
+	switch confidence {
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	case "low":
+		return 1
+	default:
+		return 0
+	}
 }
 
 const htmlTemplate = `<!DOCTYPE html>
@@ -209,7 +304,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 .header .meta span{display:flex;align-items:center;gap:6px}
 .container{max-width:1400px;margin:0 auto;padding:24px 32px}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;margin-bottom:28px}
-.stat-card{background:#161b22;border:1px solid #21262d;border-radius:10px;padding:18px 20px;transition:border-color .2s}
+.stat-card{background:#161b22;border:1px solid #21262d;border-radius:10px;padding:18px 20px;transition:border-color .2s;cursor:pointer}
 .stat-card:hover{border-color:#30363d}
 .stat-card .val{font-size:32px;font-weight:700;line-height:1}
 .stat-card .lbl{font-size:12px;color:#8b949e;margin-top:6px}
@@ -257,6 +352,12 @@ td.ctx-cell{max-width:360px;word-break:break-all;color:#6e7681;font-size:11px;fo
 .no-data{text-align:center;padding:48px;color:#484f58}
 .no-data .ico{font-size:40px;margin-bottom:12px}
 .footer{text-align:center;padding:24px;color:#484f58;font-size:12px;border-top:1px solid #21262d;margin-top:24px}
+.package-alert{border-radius:10px;padding:16px 18px;margin-bottom:22px;border:1px solid #30363d;background:#161b22;color:#c9d1d9}
+.package-alert.partial{border-color:rgba(227,179,65,.45);background:rgba(227,179,65,.08)}
+.package-alert.full{border-color:rgba(63,185,80,.35);background:rgba(63,185,80,.07)}
+.package-alert h3{font-size:14px;margin-bottom:8px;color:#e1e4e8}
+.package-alert p{font-size:13px;line-height:1.7;color:#8b949e}
+.package-alert b{color:#e1e4e8}
 </style>
 </head>
 <body>
@@ -270,12 +371,24 @@ td.ctx-cell{max-width:360px;word-break:break-all;color:#6e7681;font-size:11px;fo
 </div>
 <div class="container">
 
+{{with .PackageStatus}}
+<div class="package-alert {{.Status}}">
+  {{if eq .Status "partial"}}
+  <h3>⚠ 当前解包结果不完整</h3>
+  <p>本机仅找到 <b>{{.FoundSubpackageCount}}/{{.DeclaredSubpackageCount}}</b> 个分包，存在 <b>{{.PlaceholderPageCount}}</b> 个占位页面。安全扫描结果只覆盖已下载并真实还原的源码；缺失分包里的接口、密钥和业务逻辑不会被扫描到。详情见 <b>{{.ReportPath}}</b>。</p>
+  {{else}}
+  <h3>✅ 分包完整性通过</h3>
+  <p>已找到 <b>{{.FoundSubpackageCount}}/{{.DeclaredSubpackageCount}}</b> 个分包，真实页面 <b>{{.RealPageCount}}</b> 个。</p>
+  {{end}}
+</div>
+{{end}}
+
 <div class="stats">
   <div class="stat-card total"><div class="val">{{.TotalMatches}}</div><div class="lbl">总匹配数</div></div>
   <div class="stat-card unique"><div class="val">{{.UniqueCount}}</div><div class="lbl">去重后数量</div></div>
-  <div class="stat-card high"><div class="val">{{.HighRisk}}</div><div class="lbl">🔴 高风险</div></div>
-  <div class="stat-card med"><div class="val">{{.MediumRisk}}</div><div class="lbl">🟡 中风险</div></div>
-  <div class="stat-card low"><div class="val">{{.LowRisk}}</div><div class="lbl">🟢 低风险</div></div>
+  <div class="stat-card high" onclick="switchTabByKey('risk-high')" title="查看高风险项"><div class="val">{{.HighRisk}}</div><div class="lbl">🔴 高风险</div></div>
+  <div class="stat-card med" onclick="switchTabByKey('risk-medium')" title="查看中风险项"><div class="val">{{.MediumRisk}}</div><div class="lbl">🟡 中风险</div></div>
+  <div class="stat-card low" onclick="switchTabByKey('risk-low')" title="查看低风险项"><div class="val">{{.LowRisk}}</div><div class="lbl">🟢 低风险</div></div>
   <div class="stat-card unique"><div class="val">{{.ObfuscatedCount}}</div><div class="lbl">混淆文件</div></div>
 </div>
 
@@ -302,6 +415,9 @@ td.ctx-cell{max-width:360px;word-break:break-all;color:#6e7681;font-size:11px;fo
 
 <div class="tabs" id="tabs">
   <div class="tab active" onclick="switchTab('all',this)">全部<span class="badge">{{.UniqueCount}}</span></div>
+  <div class="tab" onclick="switchTab('risk-high',this)">高风险<span class="badge">{{.HighRisk}}</span></div>
+  <div class="tab" onclick="switchTab('risk-medium',this)">中风险<span class="badge">{{.MediumRisk}}</span></div>
+  <div class="tab" onclick="switchTab('risk-low',this)">低风险<span class="badge">{{.LowRisk}}</span></div>
   <div class="tab" onclick="switchTab('obfuscated',this)">混淆文件<span class="badge">{{.ObfuscatedCount}}</span></div>
   {{range .Categories}}
   <div class="tab" onclick="switchTab('{{.Key}}',this)">{{.Name}}<span class="badge">{{.Count}}</span></div>
@@ -318,6 +434,84 @@ td.ctx-cell{max-width:360px;word-break:break-all;color:#6e7681;font-size:11px;fo
     <thead><tr><th>#</th><th>内容</th><th>分类</th><th>风险</th><th>出现次数</th><th>文件路径</th><th>行号</th><th>上下文</th></tr></thead>
     <tbody>
     {{range $i,$item := .AllItems}}
+    <tr>
+      <td style="color:#484f58;white-space:nowrap">{{add $i 1}}</td>
+      <td class="content-cell">{{$item.Content}}</td>
+      <td style="white-space:nowrap;color:#8b949e">{{$item.Category}}</td>
+      <td><span class="risk-badge {{riskClass $item.Confidence}}">{{riskLabel $item.Confidence}}</span></td>
+      <td style="text-align:center;color:#8b949e">{{$item.Count}}</td>
+      <td class="path-cell">{{$item.FilePath}}</td>
+      <td style="text-align:center;color:#8b949e">{{$item.LineNumber}}</td>
+      <td class="ctx-cell">{{$item.Context}}</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{end}}
+</div>
+
+<div class="panel" id="panel-risk-high">
+  {{if eq (len .HighItems) 0}}
+  <div class="no-data"><div class="ico">✅</div><div>未发现高风险项</div></div>
+  {{else}}
+  <div class="table-wrap">
+  <table id="tbl-risk-high">
+    <thead><tr><th>#</th><th>内容</th><th>分类</th><th>风险</th><th>出现次数</th><th>文件路径</th><th>行号</th><th>上下文</th></tr></thead>
+    <tbody>
+    {{range $i,$item := .HighItems}}
+    <tr>
+      <td style="color:#484f58;white-space:nowrap">{{add $i 1}}</td>
+      <td class="content-cell">{{$item.Content}}</td>
+      <td style="white-space:nowrap;color:#8b949e">{{$item.Category}}</td>
+      <td><span class="risk-badge {{riskClass $item.Confidence}}">{{riskLabel $item.Confidence}}</span></td>
+      <td style="text-align:center;color:#8b949e">{{$item.Count}}</td>
+      <td class="path-cell">{{$item.FilePath}}</td>
+      <td style="text-align:center;color:#8b949e">{{$item.LineNumber}}</td>
+      <td class="ctx-cell">{{$item.Context}}</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{end}}
+</div>
+
+<div class="panel" id="panel-risk-medium">
+  {{if eq (len .MediumItems) 0}}
+  <div class="no-data"><div class="ico">✅</div><div>未发现中风险项</div></div>
+  {{else}}
+  <div class="table-wrap">
+  <table id="tbl-risk-medium">
+    <thead><tr><th>#</th><th>内容</th><th>分类</th><th>风险</th><th>出现次数</th><th>文件路径</th><th>行号</th><th>上下文</th></tr></thead>
+    <tbody>
+    {{range $i,$item := .MediumItems}}
+    <tr>
+      <td style="color:#484f58;white-space:nowrap">{{add $i 1}}</td>
+      <td class="content-cell">{{$item.Content}}</td>
+      <td style="white-space:nowrap;color:#8b949e">{{$item.Category}}</td>
+      <td><span class="risk-badge {{riskClass $item.Confidence}}">{{riskLabel $item.Confidence}}</span></td>
+      <td style="text-align:center;color:#8b949e">{{$item.Count}}</td>
+      <td class="path-cell">{{$item.FilePath}}</td>
+      <td style="text-align:center;color:#8b949e">{{$item.LineNumber}}</td>
+      <td class="ctx-cell">{{$item.Context}}</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  {{end}}
+</div>
+
+<div class="panel" id="panel-risk-low">
+  {{if eq (len .LowItems) 0}}
+  <div class="no-data"><div class="ico">✅</div><div>未发现低风险项</div></div>
+  {{else}}
+  <div class="table-wrap">
+  <table id="tbl-risk-low">
+    <thead><tr><th>#</th><th>内容</th><th>分类</th><th>风险</th><th>出现次数</th><th>文件路径</th><th>行号</th><th>上下文</th></tr></thead>
+    <tbody>
+    {{range $i,$item := .LowItems}}
     <tr>
       <td style="color:#484f58;white-space:nowrap">{{add $i 1}}</td>
       <td class="content-cell">{{$item.Content}}</td>
@@ -392,6 +586,10 @@ td.ctx-cell{max-width:360px;word-break:break-all;color:#6e7681;font-size:11px;fo
 
 <script>
 var currentTab='all';
+function switchTabByKey(key){
+  var el=document.querySelector('.tab[onclick*="' + key + '"]');
+  if(el){ switchTab(key,el); }
+}
 function switchTab(key,el){
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));

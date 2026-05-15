@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"log"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -23,7 +26,7 @@ type XmlParser struct {
 
 // 获取生成函数
 func getFuc(code string, gwx map[string]interface{}) {
-	re := regexp.MustCompile(`else\s+__wxAppCode__\['([^']+\.wxml)'\]\s*=\s*(\$[^;]+;)`)
+	re := regexp.MustCompile(`(?:else\s+)?__wxAppCode__\[\s*['"]([^'"]+\.wxml)['"]\s*\]\s*=\s*(\$[A-Za-z_$][\w$]*\s*\(\s*['"][^'"]+\.wxml['"]\s*\)\s*;)`)
 
 	matches := re.FindAllStringSubmatch(code, -1)
 	if len(matches) > 0 {
@@ -33,9 +36,70 @@ func getFuc(code string, gwx map[string]interface{}) {
 	}
 }
 
+func collectDirectWXMLGenerateCalls(code string, gwx map[string]interface{}) {
+	re := regexp.MustCompile(`(?:var\s+[A-Za-z_$][\w$]*\s*=\s*)?(\$[A-Za-z_$][\w$]*\s*\(\s*['"]([^'"]+\.wxml)['"]\s*\)\s*;)`)
+
+	matches := re.FindAllStringSubmatch(code, -1)
+	for _, match := range matches {
+		if len(match) < 3 {
+			continue
+		}
+		if _, exists := gwx[match[2]]; exists {
+			continue
+		}
+		gwx[match[2]] = match[1]
+	}
+}
+
+func collectHTMLWXMLGenerateCalls(outputDir string, option config.WxapkgInfo, gwx map[string]interface{}) {
+	seen := make(map[string]bool)
+	for _, rawName := range option.RawFiles {
+		normalized := strings.TrimPrefix(filepath.ToSlash(strings.TrimSpace(rawName)), "/")
+		if !strings.HasSuffix(strings.ToLower(normalized), ".html") {
+			continue
+		}
+		for _, candidate := range htmlSourceCandidates(outputDir, option.SourcePath, normalized) {
+			if seen[candidate] {
+				continue
+			}
+			seen[candidate] = true
+			code, err := os.ReadFile(candidate)
+			if err != nil {
+				continue
+			}
+			collectDirectWXMLGenerateCalls(string(code), gwx)
+		}
+	}
+}
+
+func htmlSourceCandidates(outputDir, sourcePath, rel string) []string {
+	candidates := []string{
+		filepath.Join(outputDir, filepath.FromSlash(rel)),
+		filepath.Join(sourcePath, filepath.FromSlash(rel)),
+	}
+
+	if sourcePath != "" {
+		sourceSlash := filepath.ToSlash(sourcePath)
+		if strings.HasSuffix(sourceSlash, strings.TrimSuffix(pathpkg.Dir(rel), ".")) {
+			candidates = append(candidates, filepath.Join(sourcePath, filepath.Base(rel)))
+		}
+	}
+
+	seen := make(map[string]bool, len(candidates))
+	result := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate == "" || seen[candidate] {
+			continue
+		}
+		seen[candidate] = true
+		result = append(result, candidate)
+	}
+	return result
+}
+
 // 提取函数名和参数
 func extractFuncNameAndArgs(gencode string) (string, []interface{}) {
-	re := regexp.MustCompile(`(\$\w+)\s*\(\s*'(.*?)'\s*\)`)
+	re := regexp.MustCompile(`(\$[A-Za-z_$][\w$]*)\s*\(\s*['"]([^'"]+)['"]\s*\)`)
 	matches := re.FindStringSubmatch(gencode)
 	if len(matches) < 3 {
 		return "", nil
@@ -45,6 +109,160 @@ func extractFuncNameAndArgs(gencode string) (string, []interface{}) {
 	arg := matches[2]
 
 	return funcName, []interface{}{arg}
+}
+
+func wxmlModuleAliases(name string) []string {
+	normalized := strings.TrimSpace(name)
+	if normalized == "" {
+		return nil
+	}
+
+	withoutPrefix := strings.TrimPrefix(normalized, "./")
+	cleaned := pathpkg.Clean(withoutPrefix)
+	if cleaned == "." {
+		cleaned = withoutPrefix
+	}
+	cleaned = strings.TrimPrefix(cleaned, "/")
+
+	candidates := []string{normalized}
+	if cleaned != "" {
+		candidates = append(candidates, cleaned, "./"+cleaned)
+	}
+
+	seen := make(map[string]bool, len(candidates))
+	aliases := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate == "" || seen[candidate] {
+			continue
+		}
+		seen[candidate] = true
+		aliases = append(aliases, candidate)
+	}
+	return aliases
+}
+
+func buildWXMLModuleRegistrationScript(gwx map[string]interface{}) string {
+	if len(gwx) == 0 {
+		return ""
+	}
+
+	keys := make([]string, 0, len(gwx))
+	for name := range gwx {
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+
+	var sb strings.Builder
+	sb.WriteString("\n;(function(){\n")
+	sb.WriteString("if (typeof __wxAppCode__ === 'undefined') { __wxAppCode__ = {}; }\n")
+	for _, name := range keys {
+		gencode, ok := gwx[name].(string)
+		if !ok {
+			continue
+		}
+		gencode = strings.TrimSpace(gencode)
+		if gencode == "" {
+			continue
+		}
+		if !strings.HasSuffix(gencode, ";") {
+			gencode += ";"
+		}
+		for _, alias := range wxmlModuleAliases(name) {
+			sb.WriteString("__wxAppCode__[")
+			sb.WriteString(strconv.Quote(alias))
+			sb.WriteString("]=")
+			sb.WriteString(gencode)
+			sb.WriteByte('\n')
+		}
+	}
+	sb.WriteString("})();\n")
+	return sb.String()
+}
+
+func shouldUseTaroStaticFallback(path, scriptCode string) bool {
+	cleaned := cleanWXMLPath(path)
+	if cleaned == "" || !strings.HasSuffix(cleaned, ".wxml") {
+		return false
+	}
+	return strings.Contains(scriptCode, "taro_tmpl")
+}
+
+func cleanWXMLPath(name string) string {
+	normalized := strings.TrimSpace(filepath.ToSlash(name))
+	normalized = strings.TrimPrefix(normalized, "./")
+	normalized = strings.TrimPrefix(normalized, "/")
+	cleaned := pathpkg.Clean(normalized)
+	if cleaned == "." {
+		return normalized
+	}
+	return strings.TrimPrefix(cleaned, "/")
+}
+
+func buildTaroStaticWXML(path, scriptCode string) string {
+	cleaned := cleanWXMLPath(path)
+	if cleaned == "" {
+		return ""
+	}
+	if cleaned == "base.wxml" {
+		return buildTaroBaseWXML(scriptCode)
+	}
+
+	return fmt.Sprintf("<!--%s-->\n<import src=\"%s\" />\n<template is=\"taro_tmpl\" data=\"{{root:root}}\" />\n",
+		cleaned,
+		relativeBaseWXMLPath(cleaned),
+	)
+}
+
+func relativeBaseWXMLPath(cleanedPath string) string {
+	dir := pathpkg.Dir(cleanedPath)
+	if dir == "." || dir == "" {
+		return "base.wxml"
+	}
+	depth := strings.Count(dir, "/") + 1
+	return strings.Repeat("../", depth) + "base.wxml"
+}
+
+func buildTaroBaseWXML(scriptCode string) string {
+	templateNames := extractTaroBaseTemplateNames(scriptCode)
+
+	var sb strings.Builder
+	sb.WriteString("<!--base.wxml-->\n")
+	sb.WriteString("<template name=\"taro_tmpl\">\n")
+	sb.WriteString("\t<block wx:for=\"{{root.cn || root.children || []}}\" wx:for-item=\"item\" wx:for-index=\"index\" wx:key=\"sid\">\n")
+	sb.WriteString("\t\t<template is=\"{{'tmpl_0_' + (item.nn || item.tag || 'undefined')}}\" data=\"{{item:item,index:index,sid:item.sid}}\" />\n")
+	sb.WriteString("\t</block>\n")
+	sb.WriteString("</template>\n")
+
+	for _, name := range templateNames {
+		if name == "taro_tmpl" {
+			continue
+		}
+		sb.WriteString("<template name=\"")
+		sb.WriteString(name)
+		sb.WriteString("\">\n\t<block />\n</template>\n")
+	}
+	return sb.String()
+}
+
+func extractTaroBaseTemplateNames(scriptCode string) []string {
+	re := regexp.MustCompile(`d_\[x\[0\]\]\["([^"]+)"\]\s*=\s*function`)
+	matches := re.FindAllStringSubmatch(scriptCode, -1)
+
+	seen := map[string]bool{
+		"taro_tmpl":        true,
+		"tmpl_0_undefined": true,
+	}
+	names := []string{"taro_tmpl", "tmpl_0_undefined"}
+	validName := regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
+	for _, match := range matches {
+		if len(match) < 2 || seen[match[1]] || !validName.MatchString(match[1]) {
+			continue
+		}
+		seen[match[1]] = true
+		names = append(names, match[1])
+	}
+	sort.Strings(names)
+	return names
 }
 
 // 递归调用函数直到获得非函数结果
@@ -233,6 +451,11 @@ func getXml(path string, scriptCode, gencode string, results chan<- map[string]s
 	// 释放信号量
 	defer func() { <-sem }()
 
+	if shouldUseTaroStaticFallback(path, scriptCode) {
+		results <- map[string]string{path: buildTaroStaticWXML(path, scriptCode)}
+		return
+	}
+
 	// 提取函数名和参数
 	funcName, params := extractFuncNameAndArgs(gencode)
 	if funcName == "" {
@@ -339,6 +562,9 @@ func getXml(path string, scriptCode, gencode string, results chan<- map[string]s
 			}
 		}
 	}
+	if strings.TrimSpace(bestContent) == "" && shouldUseTaroStaticFallback(path, scriptCode) {
+		bestContent = buildTaroStaticWXML(path, scriptCode)
+	}
 
 	// 保存结果
 	results <- map[string]string{path: bestContent}
@@ -385,8 +611,9 @@ var setCssToHead=function(file,_xcInvalid,info){return ()=>{}};`
 
 	// 正则匹配生成函数
 	getFuc(scriptCode, gwx)
+	collectHTMLWXMLGenerateCalls(p.OutputDir, option, gwx)
 
-	scriptCode = patch + scriptCode
+	scriptCode = patch + scriptCode + buildWXMLModuleRegistrationScript(gwx)
 
 	// 运行生成函数
 	for path, gencode := range gwx {

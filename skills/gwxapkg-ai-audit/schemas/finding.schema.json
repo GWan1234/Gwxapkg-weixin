@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Gwxapkg AI Audit Finding",
+  "type": "object",
+  "required": ["id", "title", "severity", "confidence", "status", "evidence", "risk", "remediation"],
+  "properties": {
+    "id": { "type": "string" },
+    "title": { "type": "string" },
+    "severity": { "type": "string", "enum": ["critical", "high", "medium", "low", "info"] },
+    "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
+    "status": { "type": "string", "enum": ["confirmed", "needs_server_validation", "audit_attention", "insufficient_evidence"] },
+    "affected": {
+      "type": "object",
+      "properties": {
+        "apis": { "type": "array", "items": { "type": "string" } },
+        "pages": { "type": "array", "items": { "type": "string" } },
+        "files": { "type": "array", "items": { "type": "string" } },
+        "business_flows": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source", "file", "summary"],
+        "properties": {
+          "source": { "type": "string" },
+          "file": { "type": "string" },
+          "line": { "type": "integer", "minimum": 1 },
+          "snippet": { "type": "string" },
+          "summary": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "risk": { "type": "string" },
+    "remediation": { "type": "array", "items": { "type": "string" } },
+    "validation_steps": { "type": "array", "items": { "type": "string" } },
+    "limitations": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": true
+}

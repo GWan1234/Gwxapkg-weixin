@@ -5,13 +5,17 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/25smoking/Gwxapkg/cmd"
 	internalcmd "github.com/25smoking/Gwxapkg/internal/cmd"
 	"github.com/25smoking/Gwxapkg/internal/locator"
 	"github.com/25smoking/Gwxapkg/internal/pack"
+	"github.com/25smoking/Gwxapkg/internal/packagecheck"
 	"github.com/25smoking/Gwxapkg/internal/semantic"
 	"github.com/25smoking/Gwxapkg/internal/ui"
 	"github.com/25smoking/Gwxapkg/internal/util"
@@ -66,6 +70,7 @@ func handleAllCommand(args []string) {
 	sensitive := allFlags.Bool("sensitive", true, "是否获取敏感数据")
 	postman := allFlags.Bool("postman", false, "是否导出 Postman Collection")
 	workspace := allFlags.Bool("workspace", false, "是否保留可精确回包的工作区")
+	watch := allFlags.Bool("watch", false, "只监听缺失分包下载，不执行解包")
 	astRename := allFlags.String("ast-rename", semantic.ASTRenameModeDeep, "AST 重命名模式: off/report/safe/deep")
 	astDiff := allFlags.Bool("ast-diff", true, "是否生成 AST 重命名 diff 报告")
 	astPatch := allFlags.Bool("ast-patch", true, "是否生成 AST 重命名 patch")
@@ -119,6 +124,10 @@ func handleAllCommand(args []string) {
 		ui.Info("或使用 -id-file=ids.txt 指定文件，或 --all 处理全部")
 		return
 	}
+	if *watch && len(appIDs) > 1 {
+		ui.Error("-watch 只支持单个 AppID，请使用 all -id=<AppID> -watch")
+		return
+	}
 
 	ui.Info("准备处理 %d 个小程序", len(appIDs))
 	fmt.Println()
@@ -158,7 +167,19 @@ func handleAllCommand(args []string) {
 		}
 		ui.Success("找到小程序: %s （版本 %s, %d 个文件）", displayName, matched.Version, len(matched.Files))
 
-		cmd.ExecuteWithOptions(id, matched.Path, *outputDir, ".wxapkg", *restoreDir, *pretty, *noClean, *save, *sensitive, *postman, *workspace, buildRewriteOptions(*astRename, *astDiff, *astPatch))
+		resolvedOutputDir := *outputDir
+		if resolvedOutputDir == "" {
+			resolvedOutputDir = internalcmd.DetermineOutputDir(matched.Path, id)
+		}
+		if *watch {
+			ui.Info("watch 模式只监听分包下载，不执行解包；需要合并源码时请退出后运行普通 scan 或 all")
+			report := buildWatchReport(id, matched.Path, resolvedOutputDir)
+			watchPackageDownloads(id, matched.Path, resolvedOutputDir, report)
+			continue
+		}
+
+		rewriteOptions := buildRewriteOptions(*astRename, *astDiff, *astPatch)
+		cmd.ExecuteWithOptions(id, matched.Path, resolvedOutputDir, ".wxapkg", *restoreDir, *pretty, *noClean, *save, *sensitive, *postman, *workspace, rewriteOptions)
 	}
 
 	ui.PrintDivider()
@@ -170,6 +191,7 @@ func handleScanCommand(args []string) {
 	scanFlags := flag.NewFlagSet("scan", flag.ExitOnError)
 	verbose := scanFlags.Bool("verbose", false, "显示扫描候选路径诊断")
 	postman := scanFlags.Bool("postman", false, "是否导出 Postman Collection")
+	watch := scanFlags.Bool("watch", false, "只监听缺失分包下载，不执行解包")
 	astRename := scanFlags.String("ast-rename", semantic.ASTRenameModeDeep, "AST 重命名模式: off/report/safe/deep")
 	astDiff := scanFlags.Bool("ast-diff", true, "是否生成 AST 重命名 diff 报告")
 	astPatch := scanFlags.Bool("ast-patch", true, "是否生成 AST 重命名 patch")
@@ -217,14 +239,149 @@ func handleScanCommand(args []string) {
 	fmt.Println()
 
 	outputDir := internalcmd.DetermineOutputDir(selected.Path, selected.AppID)
-	ui.Info("解包结果将保存到: %s", outputDir)
+	if *watch {
+		ui.Info("完整性报告读取目录: %s", outputDir)
+	} else {
+		ui.Info("解包结果将保存到: %s", outputDir)
+	}
 	fmt.Println()
 
+	if *watch {
+		ui.Info("watch 模式只监听分包下载，不执行解包；需要合并源码时请退出后运行普通 scan 或 all")
+		report := buildWatchReport(selected.AppID, selected.Path, outputDir)
+		watchPackageDownloads(selected.AppID, selected.Path, outputDir, report)
+		ui.PrintDivider()
+		ui.Success("watch 已结束")
+		return
+	}
+
 	// 直接进入解包流程（复用 all 命令的默认参数）
-	cmd.ExecuteWithOptions(selected.AppID, selected.Path, outputDir, ".wxapkg", true, true, false, false, true, *postman, false, buildRewriteOptions(*astRename, *astDiff, *astPatch))
+	rewriteOptions := buildRewriteOptions(*astRename, *astDiff, *astPatch)
+	cmd.ExecuteWithOptions(selected.AppID, selected.Path, outputDir, ".wxapkg", true, true, false, false, true, *postman, false, rewriteOptions)
 
 	ui.PrintDivider()
 	ui.Success("处理完成!")
+}
+
+func buildWatchReport(appID, inputDir, outputDir string) *packagecheck.Report {
+	report, err := packagecheck.Analyze(outputDir, appID, mapKeys(snapshotWxapkgFiles(inputDir)))
+	if err == nil && report != nil && report.Status != packagecheck.StatusUnknown {
+		return report
+	}
+	existing, readErr := packagecheck.ReadReport(outputDir)
+	if readErr == nil {
+		return existing
+	}
+	return nil
+}
+
+func watchPackageDownloads(appID, inputDir, outputDir string, report *packagecheck.Report) {
+	if report.IsFull() {
+		ui.Success("分包已完整，无需进入 watch")
+		return
+	}
+
+	ui.Warning("进入缺失分包监控模式: %s", appID)
+	ui.Info("   - 请在微信中打开缺失功能页，客户端下载新分包后工具会自动捕获")
+	ui.Info("   - 监听目录: %s", inputDir)
+	if report == nil || report.Status == packagecheck.StatusUnknown {
+		ui.Warning("   - 未找到可用的完整性报告，当前仅提示新增 wxapkg；先运行普通 scan 可生成缺失清单")
+	} else {
+		printWatchMissingRoots(report)
+	}
+
+	known := snapshotWxapkgFiles(inputDir)
+	ui.Info("   - 当前已缓存 wxapkg: %d", len(known))
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt)
+	defer signal.Stop(sigCh)
+
+	for {
+		select {
+		case <-sigCh:
+			ui.Info("已退出 watch；需要合并新分包时请运行普通 scan 或 all -id=%s", appID)
+			ui.Info("当前输出目录: %s", outputDir)
+			return
+		case <-ticker.C:
+			current := snapshotWxapkgFiles(inputDir)
+			newFiles := diffFileSet(known, current)
+			if len(newFiles) == 0 {
+				continue
+			}
+			sort.Strings(newFiles)
+			for _, file := range newFiles {
+				ui.Success("捕获新 wxapkg: %s", file)
+			}
+			known = current
+			report = buildWatchReport(appID, inputDir, outputDir)
+			printWatchProgress(report, len(known))
+		}
+	}
+}
+
+func printWatchProgress(report *packagecheck.Report, cachedPackageCount int) {
+	ui.Info("   - 当前已缓存 wxapkg: %d", cachedPackageCount)
+	if report == nil || report.Status == packagecheck.StatusUnknown {
+		return
+	}
+	if report.IsFull() {
+		ui.Success("分包包文件已补齐；退出 watch 后运行普通 scan/all 重新解包即可合并源码")
+		return
+	}
+	printWatchMissingRoots(report)
+}
+
+func printWatchMissingRoots(report *packagecheck.Report) {
+	if report == nil || len(report.MissingSubpackages) == 0 {
+		return
+	}
+	ui.Info("   - 仍缺失分包: %d", len(report.MissingSubpackages))
+	limit := len(report.MissingSubpackages)
+	if limit > 10 {
+		limit = 10
+	}
+	for _, root := range report.MissingSubpackages[:limit] {
+		ui.Info("     · %s", root)
+	}
+	if len(report.MissingSubpackages) > limit {
+		ui.Info("     · ... 还有 %d 个", len(report.MissingSubpackages)-limit)
+	}
+}
+
+func snapshotWxapkgFiles(dir string) map[string]struct{} {
+	result := make(map[string]struct{})
+	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d == nil || d.IsDir() {
+			return nil
+		}
+		if strings.EqualFold(filepath.Ext(d.Name()), ".wxapkg") {
+			result[filepath.Clean(path)] = struct{}{}
+		}
+		return nil
+	})
+	return result
+}
+
+func diffFileSet(previous, current map[string]struct{}) []string {
+	result := make([]string, 0)
+	for file := range current {
+		if _, ok := previous[file]; !ok {
+			result = append(result, file)
+		}
+	}
+	return result
+}
+
+func mapKeys(values map[string]struct{}) []string {
+	result := make([]string, 0, len(values))
+	for value := range values {
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func scanPrograms(verbose bool) ([]locator.MiniProgramInfo, error) {
@@ -271,7 +428,7 @@ func handleScanOnlyCommand(args []string) {
 	f := flag.NewFlagSet("scan-only", flag.ExitOnError)
 	dir := f.String("dir", "", "已解包的目录路径")
 	appID := f.String("id", "", "AppID（可选，用于报告标题）")
-	format := f.String("format", "both", "报告格式: excel / html / both")
+	format := f.String("format", "both", "报告格式: json / excel / html / both")
 	out := f.String("out", "", "报告输出目录（默认与 -dir 相同）")
 	postman := f.Bool("postman", false, "是否导出 Postman Collection")
 	f.Parse(args)

@@ -272,15 +272,15 @@ func (p *ConfigParser) Parse(option config.WxapkgInfo) error {
 		for _, subPackage := range app.SubPackages {
 			for _, item := range subPackage.Pages {
 				a := subPackage.Root + item + ".xx"
-				err := save(filepath.Join(dir, changeExt(a, ".js")), []byte("// "+changeExt(a, ".js")+"\nPage({data: {}})"))
+				err := saveIfMissingOrEmpty(filepath.Join(dir, changeExt(a, ".js")), []byte("// "+changeExt(a, ".js")+"\nPage({data: {}})"))
 				if err != nil {
 					return err
 				}
-				err = save(filepath.Join(dir, changeExt(a, ".wxml")), []byte("<!--"+changeExt(a, ".wxml")+"--><text>"+changeExt(a, ".wxml")+"</text>"))
+				err = saveIfMissingOrEmpty(filepath.Join(dir, changeExt(a, ".wxml")), []byte("<!--"+changeExt(a, ".wxml")+"--><text>"+changeExt(a, ".wxml")+"</text>"))
 				if err != nil {
 					return err
 				}
-				err = save(filepath.Join(dir, changeExt(a, ".wxss")), []byte("/* "+changeExt(a, ".wxss")+" */"))
+				err = saveIfMissingOrEmpty(filepath.Join(dir, changeExt(a, ".wxss")), []byte("/* "+changeExt(a, ".wxss")+" */"))
 				if err != nil {
 					return err
 				}
@@ -331,6 +331,17 @@ func (p *ConfigParser) Parse(option config.WxapkgInfo) error {
 		return err
 	}
 	return nil
+}
+
+func saveIfMissingOrEmpty(path string, data []byte) error {
+	info, err := os.Stat(path)
+	if err == nil && info.Size() > 0 {
+		return nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return save(path, data)
 }
 
 // indexOf 返回字符串切片中项的索引

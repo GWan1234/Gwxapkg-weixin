@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-2.7.3-blue.svg)
+![Version](https://img.shields.io/badge/version-2.7.4-blue.svg)
 ![Go Version](https://img.shields.io/badge/go-%3E%3D1.21-00ADD8.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)
@@ -129,14 +129,20 @@ go run . -h
 ### 基本的な使い方
 
 ```bash
-# AppID を指定して自動スキャン + 自動処理
+# AppID を指定して自動スキャン + 自動処理。分包完整性を既定で検査
 ./gwxapkg all -id=<AppID>
 
 # 利用可能なミニプログラム一覧を表示
 ./gwxapkg scan
 
+# 対話選択後、欠落分包のダウンロードだけを監視し、解包は実行しない
+./gwxapkg scan -watch
+
 # WeChat キャッシュ候補パスの診断を表示
 ./gwxapkg scan --verbose
+
+# 指定 AppID の欠落分包を監視し、解包は実行しない
+./gwxapkg all -id=<AppID> -watch
 
 # 単一 wxapkg を解凍
 ./gwxapkg -id=<AppID> -in=<file_path>
@@ -168,10 +174,10 @@ go run . -h
 
 ```bash
 # 例1: 自動スキャンして処理
-./gwxapkg all -id=wx3c19e32cb8f31289
+./gwxapkg all -id=WX_DEMO_APPID
 
 # 例2: 解凍して Postman Collection も出力
-./gwxapkg all -id=wx3c19e32cb8f31289 -postman
+./gwxapkg all -id=WX_DEMO_APPID -postman
 
 # 例3: 単一ファイルを解凍
 ./gwxapkg -id=wx123456 -in=test.wxapkg -out=./output
@@ -194,24 +200,28 @@ go run . -h
 例:
 
 ```text
-/Applications/Gwxapkg/output/wx1234567890abcdef
-./output/wx1234567890abcdef
+/Applications/Gwxapkg/output/WX_DEMO_APPID
+./output/WX_DEMO_APPID
 ```
 
 ### 典型的な出力構造
 
 ```text
 output/
-└── wx1234567890abcdef/
+└── WX_DEMO_APPID/
     ├── app.js
     ├── page-frame.html
+    ├── sensitive_report.json
     ├── sensitive_report.xlsx
     ├── sensitive_report.html
     ├── api_collection.postman_collection.json
     ├── route_manifest.json
     ├── route_map.md
     ├── route_map.mmd
-    └── .gwxapkg/                   # -workspace=true のときのみ
+    └── .gwxapkg/
+        ├── api_endpoint_map.json
+        ├── api_endpoint_map.md
+        └── ...                      # semantic / AST / API 呼び出しチェーン産物
 ```
 
 ---
@@ -283,7 +293,8 @@ output/
 
 ### スキャンと出力の挙動
 
-- `-sensitive=true` で `sensitive_report.xlsx` と `sensitive_report.html` を生成
+- `-sensitive=true` で `sensitive_report.json`、`sensitive_report.xlsx`、`sensitive_report.html` を生成
+- 汎用 API endpoint を検出した場合、`.gwxapkg/api_endpoint_map.json` と `.gwxapkg/api_endpoint_map.md` を生成
 - `-postman=true` で `api_collection.postman_collection.json` を生成
 - `-postman` は `-sensitive` と独立して有効化可能
 - `scan-only` は同じスキャナと JS 反混淆処理を再利用
@@ -347,7 +358,7 @@ output/
 ```json
 {
   "info": {
-    "name": "wx1234567890abcdef - API Collection"
+    "name": "WX_DEMO_APPID - API Collection"
   },
   "item": [
     {
@@ -372,20 +383,36 @@ output/
 
 ---
 
-## 📈 パフォーマンス比較（v2.7.3 vs v1.0）
+## 📈 パフォーマンス比較（v2.7.4 vs v1.0）
 
-| 指標 | v1.0 | v2.7.3 | 改善点 |
+| 指標 | v1.0 | v2.7.4 | 改善点 |
 |------|------|--------|--------|
 | **スキャン速度** | 基準 | +50-70% | 正規表現の事前コンパイル |
 | **誤検知抑制** | 単純な正規表現走査 | 多層フィルタ | ブラックリスト + 文脈 + プレースホルダ + 弱値フィルタ |
 | **データ量** | 127,185 件 | 約 3,000 件 | 重複排除 + フィルタ |
-| **出力形式** | JSON | Excel / HTML | 対話的レポート |
+| **出力形式** | JSON | JSON / Excel / HTML | 機械可読 + 対話的レポート |
 | **並列性能** | 固定 10 worker | CPU*2 動的 | 自動適応 |
 | **I/O 性能** | 直接書き込み | 256 KB バッファ | システムコール削減 |
 
 ---
 
 ## 🔄 バージョン更新
+
+### v2.7.4 (2026-05-15) - Gwxapkg AI 監査 Skill、JSON 証拠、分包完整性検査
+
+#### 新機能
+- `skills/gwxapkg-ai-audit` を追加。Hermes / Codex / Claude Code などの LLM Agent から、Gwxapkg 解包済みディレクトリを証拠ベースで静的監査できます
+- 機械可読な `sensitive_report.json` を追加。Excel / HTML と同時に生成し、LLM 消費と監査追跡を容易にしました
+- `semantic api_map` が Taro / webpack の URL / request 形式をカバーできない場合に備え、`.gwxapkg/api_endpoint_map.json/.md` を汎用 API fallback として追加
+- `.gwxapkg/package_completeness.json/.md` を追加。`scan` / `all` / `scan-only` で欠落分包、占位ページ、実ソースの覆盖状況を検出します
+- `scan -watch` と `all -id=<AppID> -watch` を追加。WeChat キャッシュを純監視し、新規分包を捕获して提示するだけで自動解包は行いません。源码を合并するには終了後に通常の `scan` / `all` を実行します
+- `scan-only -format` に `json` を追加。既定の `both` は JSON、Excel、HTML を同時に出力します
+
+#### 改良
+- HTML 敏感情報レポートの先頭に、現在の解包結果が部分的かどうかを示すバナーを追加
+- ルート分析と再スキャンで `sensitive_report.json` を除外し、生成済みレポートがソースとして再スキャンされないようにしました
+- API 認可、暗号データフロー、Burp 関連付け、カバレッジギャップ、レポート統合用の Hermes skill 素材を追加
+- AI 監査 skill は既定でローカル完全証拠レポートを生成し、明示要求がある場合のみ対外向け脱敏コピーを別途生成します
 
 ### v2.7.3 (2026-05-12) - Semantic と AST 深度復元の強化
 

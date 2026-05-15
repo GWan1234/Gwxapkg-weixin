@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Gwxapkg AI Audit Context",
+  "type": "object",
+  "required": ["target_dir", "artifacts", "coverage"],
+  "properties": {
+    "target_dir": { "type": "string" },
+    "app_id": { "type": "string" },
+    "artifacts": {
+      "type": "object",
+      "properties": {
+        "semantic_module_map": { "type": "string" },
+        "api_map": { "type": "string" },
+        "api_endpoint_map": { "type": "string" },
+        "api_call_chain": { "type": "string" },
+        "api_pseudo": { "type": "string" },
+        "ast_rename_map": { "type": "string" },
+        "burp_api_link": { "type": "string" },
+        "route_manifest": { "type": "string" },
+        "sensitive_report": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "coverage": {
+      "type": "object",
+      "properties": {
+        "api_count": { "type": "integer", "minimum": 0 },
+        "call_chain_count": { "type": "integer", "minimum": 0 },
+        "route_count": { "type": "integer", "minimum": 0 },
+        "sensitive_match_count": { "type": "integer", "minimum": 0 },
+        "missing_artifacts": { "type": "array", "items": { "type": "string" } },
+        "gaps": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

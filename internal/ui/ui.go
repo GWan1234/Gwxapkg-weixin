@@ -32,7 +32,7 @@ func Banner() {
  ██║   ██║██║███╗██║ ██╔██╗ ██╔══██║██╔═══╝ ██╔═██╗ ██║   ██║
  ╚██████╔╝╚███╔███╔╝██╔╝ ██╗██║  ██║██║     ██║  ██╗╚██████╔╝
   ╚═════╝  ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝  ╚═╝ ╚═════╝`)
-	dim.Println("              Wxapkg Decompiler Tool v2.7.3")
+	dim.Println("              Wxapkg Decompiler Tool v2.7.4")
 	fmt.Println()
 }
 
@@ -146,8 +146,10 @@ func PrintUsage() {
 	cyan.Println("命令:")
 	fmt.Println()
 	white.Println("  scan                          扫描本地小程序（交互式选择解包）")
+	white.Println("  scan -watch                   交互选择后只监听缺失分包下载，不执行解包")
 	white.Println("  scan --verbose                扫描并输出候选路径诊断")
 	white.Println("  all -id=<AppID>               自动查找并处理指定小程序")
+	white.Println("  all -id=<AppID> -watch        只监听指定小程序缺失分包下载，不执行解包")
 	white.Println("  all -id=wx1,wx2,wx3           批量处理（逗号分隔）")
 	white.Println("  all -id-file=ids.txt          批量处理（文件，每行一个 AppID）")
 	white.Println("  all --all                     处理所有已缓存的小程序")
@@ -168,11 +170,12 @@ func PrintUsage() {
 	dim.Println("  -save        保存解密文件 (默认: false)")
 	dim.Println("  -sensitive   获取敏感数据 (默认: true)")
 	dim.Println("  -workspace   保留可精确回包的隐藏工作区 (默认: false)")
+	dim.Println("  -watch       只监听缺失分包下载，不执行解包")
 	dim.Println("  -ast-rename  AST 还原策略: off / report / safe / deep (默认: deep，激进写回)")
 	dim.Println("  -ast-diff    生成 AST 重命名 diff 报告 (默认: true)")
 	dim.Println("  -ast-patch   生成 AST 重命名 patch (默认: true)")
 	dim.Println("  repack -id   生成加密包，适用于回写微信客户端")
 	dim.Println("  repack -raw  生成未加密包，仅供测试")
-	dim.Println("  scan-only -format  报告格式: excel / html / both (默认: both)")
+	dim.Println("  scan-only -format  报告格式: json / excel / html / both (默认: both)")
 	fmt.Println()
 }

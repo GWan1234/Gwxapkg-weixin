@@ -11,6 +11,7 @@ import (
 	. "github.com/25smoking/Gwxapkg/internal/config"
 	"github.com/25smoking/Gwxapkg/internal/key"
 	packmeta "github.com/25smoking/Gwxapkg/internal/pack"
+	"github.com/25smoking/Gwxapkg/internal/packagecheck"
 	"github.com/25smoking/Gwxapkg/internal/reporter"
 	"github.com/25smoking/Gwxapkg/internal/restore"
 	"github.com/25smoking/Gwxapkg/internal/semantic"
@@ -18,11 +19,11 @@ import (
 	"github.com/25smoking/Gwxapkg/internal/util"
 )
 
-func Execute(appID, input, outputDir, fileExt string, restoreDir bool, pretty bool, noClean bool, save bool, sensitive bool, postman bool, workspace bool) {
-	ExecuteWithOptions(appID, input, outputDir, fileExt, restoreDir, pretty, noClean, save, sensitive, postman, workspace, semantic.DefaultRewriteOptions())
+func Execute(appID, input, outputDir, fileExt string, restoreDir bool, pretty bool, noClean bool, save bool, sensitive bool, postman bool, workspace bool) *packagecheck.Report {
+	return ExecuteWithOptions(appID, input, outputDir, fileExt, restoreDir, pretty, noClean, save, sensitive, postman, workspace, semantic.DefaultRewriteOptions())
 }
 
-func ExecuteWithOptions(appID, input, outputDir, fileExt string, restoreDir bool, pretty bool, noClean bool, save bool, sensitive bool, postman bool, workspace bool, rewriteOptions semantic.RewriteOptions) {
+func ExecuteWithOptions(appID, input, outputDir, fileExt string, restoreDir bool, pretty bool, noClean bool, save bool, sensitive bool, postman bool, workspace bool, rewriteOptions semantic.RewriteOptions) *packagecheck.Report {
 	// 确定输出目录
 	if outputDir == "" {
 		outputDir = DetermineOutputDir(input, appID)
@@ -52,7 +53,7 @@ func ExecuteWithOptions(appID, input, outputDir, fileExt string, restoreDir bool
 
 	if len(inputFiles) == 0 {
 		ui.Warning("未找到任何文件")
-		return
+		return nil
 	}
 
 	// 如果需要敏感扫描或 Postman 导出，初始化规则与收集器
@@ -147,6 +148,17 @@ func ExecuteWithOptions(appID, input, outputDir, fileExt string, restoreDir bool
 		}
 	}
 
+	var completenessReport *packagecheck.Report
+	if restoreDir {
+		report, err := packagecheck.AnalyzeAndWrite(outputDir, appID, inputFiles)
+		if err != nil {
+			ui.Warning("分包完整性检测失败: %v", err)
+		} else if report != nil && report.Status != packagecheck.StatusUnknown {
+			completenessReport = report
+			printPackageCompleteness(report, outputDir)
+		}
+	}
+
 	// 输出结果目录
 	fmt.Println()
 	ui.Success("输出目录: %s", filepath.Clean(outputDir))
@@ -156,7 +168,26 @@ func ExecuteWithOptions(appID, input, outputDir, fileExt string, restoreDir bool
 		collector.SetTotalFiles(len(inputFiles))
 		report := collector.GenerateReport()
 
+		if len(report.APIEndpoints) > 0 {
+			apiEndpointMapReporter := reporter.NewAPIEndpointMapReporter()
+			artifacts, err := apiEndpointMapReporter.Generate(report, outputDir, outputDir)
+			if err != nil {
+				ui.Warning("生成通用 API Endpoint 地图失败: %v", err)
+			} else {
+				ui.Success("通用 API Endpoint 地图: %s", artifacts.MarkdownPath)
+				ui.Info("   - 通用 Endpoint: %d", len(report.APIEndpoints))
+			}
+		}
+
 		if sensitive {
+			jsonReporter := reporter.NewJSONReporter()
+			jsonPath := filepath.Join(outputDir, "sensitive_report.json")
+			if err := jsonReporter.Generate(report, jsonPath); err != nil {
+				ui.Warning("生成 JSON 报告失败: %v", err)
+			} else {
+				ui.Success("JSON 报告: %s", jsonPath)
+			}
+
 			excelReporter := reporter.NewExcelReporter()
 			excelPath := filepath.Join(outputDir, "sensitive_report.xlsx")
 			if err := excelReporter.Generate(report, excelPath); err != nil {
@@ -202,14 +233,14 @@ func ExecuteWithOptions(appID, input, outputDir, fileExt string, restoreDir bool
 		routeManifest, routeErr := analyzer.AnalyzeMiniProgram(outputDir, appID)
 		if routeErr != nil {
 			ui.Warning("生成页面与路由地图失败: %v", routeErr)
-			return
+			return completenessReport
 		}
 
 		routeReporter := reporter.NewRouteReporter()
 		artifacts, err := routeReporter.Generate(routeManifest, outputDir)
 		if err != nil {
 			ui.Warning("写入页面与路由地图失败: %v", err)
-			return
+			return completenessReport
 		}
 
 		ui.Success("页面路由清单: %s", artifacts.ManifestPath)
@@ -223,6 +254,8 @@ func ExecuteWithOptions(appID, input, outputDir, fileExt string, restoreDir bool
 			routeManifest.Summary.TabBarPages,
 		)
 	}
+
+	return completenessReport
 }
 
 func printASTRenameNotice(options semantic.ASTRenameOptions) {
@@ -234,4 +267,22 @@ func printASTRenameNotice(options semantic.ASTRenameOptions) {
 	for _, line := range lines[1:] {
 		ui.Info("   - %s", line)
 	}
+}
+
+func printPackageCompleteness(report *packagecheck.Report, outputDir string) {
+	if report.IsFull() {
+		ui.Success("分包完整性: full（已找到 %d/%d 个分包）",
+			report.FoundSubpackageCount,
+			report.DeclaredSubpackageCount,
+		)
+	} else if report.IsPartial() {
+		ui.Warning("分包完整性: partial（已找到 %d/%d 个分包，缺失 %d 个，占位页面 %d 个）",
+			report.FoundSubpackageCount,
+			report.DeclaredSubpackageCount,
+			report.MissingSubpackageCount,
+			report.PlaceholderPageCount,
+		)
+		ui.Info("   - 当前输出目录包含完整路由骨架，但缺失分包下的占位页面不代表真实源码")
+	}
+	ui.Success("分包完整性报告: %s", filepath.Join(outputDir, ".gwxapkg", "package_completeness.md"))
 }

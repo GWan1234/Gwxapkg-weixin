@@ -1,108 +1,129 @@
-# Release v2.7.3
+# Release v2.7.4
 
 ## 版本概览
 
-`v2.7.3` 是一次源码语义还原增强版本，重点补齐 `semantic` 后处理链路的 AST 级深度重命名、API 调用链、API 审计伪代码，以及 Burp 原始请求到源码 API 的本地关联能力。
+`v2.7.4` 是一次面向 LLM 自动审计和真实解包覆盖率的版本：新增 `gwxapkg-ai-audit` skill，补齐机器可读的 `sensitive_report.json`，并新增分包完整性检测与缺失分包 watch 模式，让 Hermes / Codex / Claude Code 等 Agent 可以直接消费 Gwxapkg 的解包、语义还原、API 地图、调用链、Burp 关联、敏感扫描和覆盖缺口产物。
 
-本版本默认启用 `-ast-rename=deep` 激进策略：在保证 `exports.xxx`、对象字段、字符串、注释、WXML handler 和 `wx/uni/getApp/require/module/exports` 等公开或全局标识不被改动的前提下，将 high / medium 置信度的局部变量、函数参数和局部函数名写回为更适合审计的语义名。
+本版本不会改变 `v2.7.3` 的默认 AST 策略：`semantic` 仍默认使用 `-ast-rename=deep`，并继续保留 diff、patch、rollback 和公开标识保护。
 
 ---
 
 ## 重点更新
 
-### 1. AST 深度语义重命名
+### 1. Gwxapkg AI 审计 Skill
 
-- 默认策略从 `safe` 调整为 `deep`
-- 支持 `-ast-rename=off|report|safe|deep`
-- `deep` 模式会写回 high / medium 置信度候选，例如：
-  - `params`
-  - `requestData`
-  - `response`
-  - `event`
-  - `app`
-  - `resolve` / `reject`
-- low 置信度候选只进入报告，不写回源码
-- 命令行运行时会提示本次 AST 策略、可能改写范围、保护范围和回滚方式
+新增仓库内 skill：
 
-### 2. AST diff / patch / rollback
-
-- 生成 `.gwxapkg/ast_rename_map.json`
-- 生成 `.gwxapkg/ast_rename_diff.md`
-- 生成 `.gwxapkg/ast_rename.patch`
-- 写回前保留 `.gwxapkg/pre_ast_sources`
-- 支持：
-
-```bash
-gwxapkg semantic -dir=<已解包目录> -ast-rollback=true
+```text
+skills/gwxapkg-ai-audit/
 ```
 
-### 3. API 调用链与伪代码
+该 skill 面向 LLM Agent 使用，默认流程是：
 
-- `api_map.json` 增加 `call_chains`
-- 新增 `.gwxapkg/api_call_chain.json`
-- 新增 `.gwxapkg/api_call_chain.md`
-- 新增 `.gwxapkg/api_pseudo.md`
-- 新增 `.gwxapkg/pseudo_api/*.js`
-- 可从页面调用点追踪到本地 helper，再关联到 `controllerName.methodsName`
+- 优先读取 `.gwxapkg/` 下的确定性产物
+- 检查 API、调用链、AST、Burp、敏感扫描的覆盖缺口
+- 对未授权访问、IDOR、可逆编码、前端加密、短信验证码、注册登录等高价值线索做源码回溯
+- 输出审计报告、结构化 findings、覆盖缺口和证据表
 
-### 4. Burp 请求到源码 API 关联
+本地 Hermes 安装路径建议为：
 
-新增 `api-link` 子命令：
-
-```bash
-gwxapkg api-link -dir=<已解包目录> -burp-file=<raw_request.txt>
-cat raw_request.txt | gwxapkg api-link -dir=<已解包目录>
+```text
+~/.hermes/skills/software-development/gwxapkg-ai-audit/
 ```
 
-输出：
+### 2. 机器可读敏感扫描报告
 
-- `.gwxapkg/burp_api_link.json`
-- `.gwxapkg/burp_api_link.md`
+新增 `sensitive_report.json`：
 
-匹配策略：
+- 默认解包流程 `-sensitive=true` 时生成
+- `scan-only -format=both` 时生成
+- `scan-only -format=json` 可只生成 JSON 报告
 
-- high：请求参数中直接出现 `controllerName/methodsName`
-- medium：HTTP method / path / 参数字段与 `api_map` 高重合
-- low：仅参数字段或函数名弱匹配
+JSON 报告与现有 Excel / HTML 报告使用同一份扫描数据，适合自动审计、证据归档和 LLM 结构化消费。
 
-整个流程只解析 Burp 原始包，不发送网络请求，不重放请求。
+### 3. 分包完整性检测与 watch 模式
 
-### 5. 命令行参数增强
+新增 `.gwxapkg/package_completeness.json` 和 `.gwxapkg/package_completeness.md`：
 
-以下入口均支持 AST 策略参数：
+- `scan` / `all` 在解包后自动解析 `app.json` 的主包、分包和页面清单
+- 自动识别本机实际存在的分包包文件、真实页面、占位页面和缺失页面
+- 当只下载了部分分包时，终端和 HTML 报告都会提示“当前结果不完整”
+- `scan-only -dir=<已解包目录>` 也会基于目录内 `app.json` 和占位文件重新判断覆盖情况
 
-- `scan`
-- `all`
-- 默认 `-id/-in` 解包命令
-- `semantic -dir`
-
-参数：
+新增 `-watch` 参数：
 
 ```bash
--ast-rename=off|report|safe|deep
--ast-diff=true
--ast-patch=true
+gwxapkg scan -watch
+gwxapkg all -id=<AppID> -watch
+```
+
+当小程序缺失分包时，工具会进入纯监听模式；用户在微信中打开缺失功能页后，客户端下载的新 `.wxapkg` 会被自动捕获并提示。`-watch` 不执行解包、不自动重跑，用户退出监听后再运行普通 `scan` / `all` 合并源码。
+
+### 4. 通用 API Endpoint fallback
+
+新增 `.gwxapkg/api_endpoint_map.json` 和 `.gwxapkg/api_endpoint_map.md`：
+
+- 直接基于敏感扫描器提取到的 `api_endpoints` 生成
+- 不依赖 `controllerName/methodsName`
+- 适合 Taro / webpack / 通用 URL request 风格小程序
+- 每条 endpoint 保留原始 URL、上下文、文件路径、行号、source rule
+- 增加 `source_artifact_exists`，当扫描阶段的原始打包路径在还原目录中不可直接回读时明确标记
+- 明确 `no_redaction=true`，本地授权审计产物默认不脱敏
+
+### 5. AI 审计报告默认不脱敏
+
+更新 `gwxapkg-ai-audit` skill：
+
+- 默认报告保留原始密钥、Token、URL、参数和代码片段
+- 不主动输出 `[REDACTED]`
+- 只有用户明确要求“对外版 / 脱敏版”时，才另存脱敏副本
+- 当 `api_map.json` 为 0 但 `api_endpoint_map.json` 有数据时，写成“语义 API 地图覆盖不足，但通用 endpoint fallback 可用”
+
+### 6. 生成产物跳过规则
+
+路由分析和 `scan-only` 二次扫描会跳过：
+
+- `.gwxapkg/` 下全部审计产物
+- `sensitive_report.json`
+- `sensitive_report.xlsx`
+- `sensitive_report.html`
+- `api_collection.postman_collection.json`
+- `route_manifest.json`
+- `route_map.md`
+- `route_map.mmd`
+
+这样可以避免生成报告被再次当成源码扫描，减少误报和重复命中。
+
+---
+
+## 命令示例
+
+```bash
+# 对已解包目录生成 JSON / Excel / HTML 报告
+gwxapkg scan-only -dir=<已解包目录> -format=both
+
+# 只生成机器可读 JSON 报告
+gwxapkg scan-only -dir=<已解包目录> -format=json
+
+# 重新执行 semantic，并保留默认 deep AST 语义还原
+gwxapkg semantic -dir=<已解包目录>
 ```
 
 ---
 
 ## 验证
 
-已新增并通过以下回归测试：
-
-- AST `off/report/safe/deep` 模式
-- high / medium / low 置信度写回规则
-- 对象字段、字符串、注释、公开导出名保护
-- diff / patch / rollback
-- API 调用链生成
-- API 伪代码生成
-- Burp JSON / query / form 请求解析与 API 关联
-
-已通过：
+本地发布前建议执行：
 
 ```bash
 go test ./...
 go build ./...
+```
+
+Hermes skill 可通过确认以下文件存在完成基础验证：
+
+```text
+~/.hermes/skills/software-development/gwxapkg-ai-audit/SKILL.md
 ```
 
 ---
@@ -115,20 +136,3 @@ go build ./...
 | `gwxapkg-linux-amd64` | Linux 64 位 |
 | `gwxapkg-darwin-amd64` | macOS Intel |
 | `gwxapkg-darwin-arm64` | macOS Apple Silicon |
-
-## 使用方法
-
-```bash
-# Windows (PowerShell)
-.\gwxapkg-windows-amd64.exe scan
-
-# Linux / macOS
-chmod +x gwxapkg-darwin-arm64
-./gwxapkg-darwin-arm64 scan
-
-# 对已解包目录重新执行 semantic
-./gwxapkg-darwin-arm64 semantic -dir=<已解包目录>
-
-# Burp 请求关联源码 API
-cat raw_request.txt | ./gwxapkg-darwin-arm64 api-link -dir=<已解包目录>
-```

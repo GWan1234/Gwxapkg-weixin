@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-2.7.3-blue.svg)
+![Version](https://img.shields.io/badge/version-2.7.4-blue.svg)
 ![Go Version](https://img.shields.io/badge/go-%3E%3D1.21-00ADD8.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)
@@ -129,14 +129,20 @@ go run . -h
 ### Basic Usage
 
 ```bash
-# Automatically scan and process a Mini Program by AppID
+# Automatically scan and process a Mini Program by AppID; package completeness is checked by default
 ./gwxapkg all -id=<AppID>
 
 # List all available Mini Programs
 ./gwxapkg scan
 
+# Interactively select a Mini Program, then only watch for missing subpackages
+./gwxapkg scan -watch
+
 # Show WeChat cache candidate-path diagnostics
 ./gwxapkg scan --verbose
+
+# Watch a specific AppID without unpacking
+./gwxapkg all -id=<AppID> -watch
 
 # Unpack a single wxapkg file
 ./gwxapkg -id=<AppID> -in=<file_path>
@@ -168,10 +174,10 @@ go run . -h
 
 ```bash
 # Example 1: auto scan and process by AppID
-./gwxapkg all -id=wx3c19e32cb8f31289
+./gwxapkg all -id=WX_DEMO_APPID
 
 # Example 2: unpack and export Postman Collection
-./gwxapkg all -id=wx3c19e32cb8f31289 -postman
+./gwxapkg all -id=WX_DEMO_APPID -postman
 
 # Example 3: unpack a single file
 ./gwxapkg -id=wx123456 -in=test.wxapkg -out=./output
@@ -194,24 +200,28 @@ If `-out` is not specified, the output rules are:
 Example:
 
 ```text
-/Applications/Gwxapkg/output/wx1234567890abcdef
-./output/wx1234567890abcdef
+/Applications/Gwxapkg/output/WX_DEMO_APPID
+./output/WX_DEMO_APPID
 ```
 
 ### Typical Output Structure
 
 ```text
 output/
-└── wx1234567890abcdef/
+└── WX_DEMO_APPID/
     ├── app.js
     ├── page-frame.html
+    ├── sensitive_report.json
     ├── sensitive_report.xlsx
     ├── sensitive_report.html
     ├── api_collection.postman_collection.json
     ├── route_manifest.json
     ├── route_map.md
     ├── route_map.mmd
-    └── .gwxapkg/                   # only when -workspace=true
+    └── .gwxapkg/
+        ├── api_endpoint_map.json
+        ├── api_endpoint_map.md
+        └── ...                      # semantic / AST / API call-chain artifacts
 ```
 
 ---
@@ -283,7 +293,8 @@ To keep the 920-rule ruleset usable, the scanner applies several filtering layer
 
 ### Scan and Export Behavior
 
-- `-sensitive=true` generates `sensitive_report.xlsx` and `sensitive_report.html`
+- `-sensitive=true` generates `sensitive_report.json`, `sensitive_report.xlsx`, and `sensitive_report.html`
+- When generic API endpoints are detected, `.gwxapkg/api_endpoint_map.json` and `.gwxapkg/api_endpoint_map.md` are generated
 - `-postman=true` generates `api_collection.postman_collection.json`
 - `-postman` is independent from `-sensitive`
 - `scan-only` reuses the same scanner and JS deobfuscation pipeline
@@ -347,7 +358,7 @@ Obfuscated-file entries additionally include:
 ```json
 {
   "info": {
-    "name": "wx1234567890abcdef - API Collection"
+    "name": "WX_DEMO_APPID - API Collection"
   },
   "item": [
     {
@@ -372,20 +383,36 @@ Obfuscated-file entries additionally include:
 
 ---
 
-## 📈 Performance Comparison (v2.7.3 vs v1.0)
+## 📈 Performance Comparison (v2.7.4 vs v1.0)
 
-| Metric | v1.0 | v2.7.3 | Improvement |
+| Metric | v1.0 | v2.7.4 | Improvement |
 |--------|------|--------|-------------|
 | **Scan speed** | Baseline | +50-70% | Regex precompilation |
 | **False-positive control** | Basic regex-only scan | Multi-layer filtering | Blacklist + context + placeholder + weak-value filtering |
 | **Data volume** | 127,185 items | ~3,000 items | Deduplication + filtering |
-| **Output format** | JSON | Excel / HTML | Interactive reports |
+| **Output format** | JSON | JSON / Excel / HTML | Machine-readable and interactive reports |
 | **Concurrency** | Fixed 10 workers | CPU*2 dynamic | Adaptive concurrency |
 | **I/O performance** | Direct write | 256 KB buffer | Fewer system calls |
 
 ---
 
 ## 🔄 Version History
+
+### v2.7.4 (2026-05-15) - Gwxapkg AI Audit Skill, JSON Evidence, and Package Completeness
+
+#### New
+- Added `skills/gwxapkg-ai-audit`, a local LLM Agent skill for Hermes / Codex / Claude Code to audit Gwxapkg unpacked Mini Program directories with evidence-backed static analysis
+- Added machine-readable `sensitive_report.json`, generated alongside Excel and HTML reports for LLM consumption and audit traceability
+- Added `.gwxapkg/api_endpoint_map.json/.md` as a generic API fallback when semantic `api_map` cannot cover Taro/webpack URL/request-style APIs
+- Added `.gwxapkg/package_completeness.json/.md` to detect missing subpackages, placeholder pages, and real-source coverage during `scan`, `all`, and `scan-only`
+- Added `scan -watch` and `all -id=<AppID> -watch` as watch-only modes: they monitor the WeChat cache and report newly downloaded subpackages without unpacking; run normal `scan` / `all` afterwards to merge source files
+- Added `json` support to `scan-only -format`; the default `both` now emits JSON, Excel, and HTML
+
+#### Improved
+- HTML sensitive reports now show a package-completeness banner when the current unpacked output is partial
+- Route analysis and secondary scans now skip `sensitive_report.json` so generated reports are not scanned as source files
+- Added Hermes skill materials for API auth review, crypto dataflow review, Burp correlation, coverage-gap checks, and report assembly
+- The AI audit skill now defaults to full local evidence without redaction; public/redacted copies are generated only when explicitly requested
 
 ### v2.7.3 (2026-05-12) - Semantic and AST Deep Restoration
 
