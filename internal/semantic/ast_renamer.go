@@ -42,6 +42,10 @@ type ASTRenameOptions struct {
 	Mode          string
 	GenerateDiff  bool
 	GeneratePatch bool
+	// MaxFileBytes 超过该大小的文件跳过 AST 写回；<=0 使用默认 180KB。
+	MaxFileBytes int
+	// SkipVendor 跳过 vendor/runtime/chunk 等框架文件。
+	SkipVendor bool
 }
 
 // DefaultASTRenameOptions 默认走 deep，优先生成审计友好的源码视图。
@@ -50,7 +54,17 @@ func DefaultASTRenameOptions() ASTRenameOptions {
 		Mode:          ASTRenameModeDeep,
 		GenerateDiff:  true,
 		GeneratePatch: true,
+		MaxFileBytes:  maxASTRenameFileBytes,
+		SkipVendor:    true,
 	}
+}
+
+// EffectiveMaxFileBytes 返回生效的文件大小上限。
+func (o ASTRenameOptions) EffectiveMaxFileBytes() int {
+	if o.MaxFileBytes > 0 {
+		return o.MaxFileBytes
+	}
+	return maxASTRenameFileBytes
 }
 
 // ASTRenameReport 记录 AST 级变量/函数重命名的完整追溯信息。
@@ -341,9 +355,15 @@ func renameIdentifiersInFile(rootDir, rel string, options ASTRenameOptions) (AST
 		FilePath: rel,
 		Status:   "unchanged",
 	}
-	if len(data) > maxASTRenameFileBytes {
+	maxBytes := options.EffectiveMaxFileBytes()
+	if len(data) > maxBytes {
 		fileReport.Status = "skipped"
 		fileReport.Skipped = append(fileReport.Skipped, ASTSkipItem{Reason: "large-library-file"})
+		return fileReport, nil, nil
+	}
+	if options.SkipVendor && shouldSkipASTRenameFile(rel) {
+		fileReport.Status = "skipped"
+		fileReport.Skipped = append(fileReport.Skipped, ASTSkipItem{Reason: "vendor-or-runtime"})
 		return fileReport, nil, nil
 	}
 	if strings.TrimSpace(source) == "" {

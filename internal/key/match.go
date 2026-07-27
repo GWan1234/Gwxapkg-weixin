@@ -130,9 +130,11 @@ func InitRules() error {
 			Pattern:    pattern,
 			Category:   scanner.GetCategoryKey(rule.Id),
 			Confidence: scanner.GetConfidence(rule.Id),
+			Tier:       scanner.GetTier(rule.Id),
 		})
 	}
 
 	scanner.CompiledRules = compiledRules
+	scanner.RefreshActiveRules()
 	return nil
 }

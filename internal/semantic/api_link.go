@@ -70,6 +70,11 @@ func LinkBurpRequest(rootDir string, rawRequest string) (*BurpAPILinkReport, err
 	return report, nil
 }
 
+// ReadAPIMap 读取已生成的 api_map.json。
+func ReadAPIMap(rootDir string) (*APIMapReport, error) {
+	return readAPIMap(rootDir)
+}
+
 func readAPIMap(rootDir string) (*APIMapReport, error) {
 	data, err := os.ReadFile(filepath.Join(rootDir, reportDirName, "api_map.json"))
 	if err != nil {

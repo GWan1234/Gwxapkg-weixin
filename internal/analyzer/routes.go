@@ -1404,6 +1404,8 @@ func shouldIgnoreGeneratedArtifact(relPath string) bool {
 	case "sensitive_report.html",
 		"sensitive_report.xlsx",
 		"sensitive_report.json",
+		"sensitive_report.sarif",
+		"openapi.json",
 		"api_collection.postman_collection.json",
 		"route_manifest.json",
 		"route_map.md",

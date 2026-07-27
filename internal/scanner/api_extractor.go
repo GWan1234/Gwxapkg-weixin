@@ -107,9 +107,35 @@ var apiExtractors = []apiRegexExtractor{
 	},
 }
 
+// ExtractAPIEndpoints 从文件内容提取 API Endpoint。
 func ExtractAPIEndpoints(filePath string, content []byte) []APIEndpoint {
-	text := string(content)
+	return ExtractAPIEndpointsFromText(filePath, string(content))
+}
+
+// mergeAPIEndpoints 按 method:url 去重合并。
+func mergeAPIEndpoints(parts ...[]APIEndpoint) []APIEndpoint {
+	seen := make(map[string]struct{})
+	out := make([]APIEndpoint, 0)
+	for _, list := range parts {
+		for _, ep := range list {
+			key := ep.Method + ":" + ep.RawURL
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, ep)
+		}
+	}
+	return out
+}
+
+// ExtractAPIEndpointsFromText 从已转成 string 的内容提取 API Endpoint，避免重复分配。
+func ExtractAPIEndpointsFromText(filePath, text string) []APIEndpoint {
 	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	// 廉价预检：完全不像请求代码时跳过重正则
+	if !looksLikeAPIContent(text) {
 		return nil
 	}
 

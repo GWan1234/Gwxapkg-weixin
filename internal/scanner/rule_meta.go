@@ -366,6 +366,46 @@ func GetConfidence(ruleID string) string {
 	}
 }
 
+// GetTier 根据 rule_id / 分类推导扫描优先级层级。
+//
+// critical: 私钥、核心云/支付密钥
+// high:     高置信云、支付、协作、DevOps、安全、微信、SaaS 凭证
+// medium:   密码、token、api_key、secret、数据库
+// low:      其他中低价值规则
+// noise:    联系方式、网络标识、通用 URL/路径/域名、指纹类
+func GetTier(ruleID string) string {
+	normalized := normalizeRuleID(ruleID)
+	switch normalized {
+	case "private_key_rsa", "private_key_dsa", "private_key_ec", "private_key_openssh",
+		"private_key_pkcs8", "pgp_private_key",
+		"aws_secret_access_key", "aws_access_key_id",
+		"stripe_live_key", "wechatpay_key":
+		return TierCritical
+	case "path", "url", "api_endpoint", "domain",
+		"email", "phone_cn", "id_card_cn",
+		"ipv4", "internal_ip", "mac_address",
+		"uuid", "base64_long", "md5_hash", "sha1_hash", "sha256_hash",
+		"ssh_rsa_public", "ssh_ed25519_public", "hex_key":
+		return TierNoise
+	}
+
+	switch GetCategoryKey(ruleID) {
+	case "private_key":
+		return TierCritical
+	case "cloud", "payment", "messaging", "devops", "observability", "security", "saas", "wechat":
+		return TierHigh
+	case "database", "password", "api_key", "secret", "token":
+		return TierMedium
+	case "contact", "network", "path", "url", "domain", "artifact":
+		return TierNoise
+	default:
+		if GetConfidence(ruleID) == "low" {
+			return TierNoise
+		}
+		return TierLow
+	}
+}
+
 func normalizeRuleID(ruleID string) string {
 	normalized := strings.ToLower(strings.TrimSpace(ruleID))
 	normalized = nonAlnumPattern.ReplaceAllString(normalized, "_")

@@ -271,7 +271,15 @@ func getFinalResult(vm *goja.Runtime, value goja.Value) (goja.Value, error) {
 }
 
 func getFinalResultWithArgs(vm *goja.Runtime, value goja.Value, args ...goja.Value) (goja.Value, error) {
-	for value.ExportType().Kind() == reflect.Func {
+	// goja.Value 可能为 nil（typed nil interface 包装后也需防御）
+	for {
+		if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
+			return value, nil
+		}
+		exportType := value.ExportType()
+		if exportType == nil || exportType.Kind() != reflect.Func {
+			break
+		}
 		fn, ok := goja.AssertFunction(value)
 		if !ok {
 			return nil, fmt.Errorf("expected function, got %T", value.Export())
@@ -536,6 +544,10 @@ func getXml(path string, scriptCode, gencode string, results chan<- map[string]s
 	finalResult, err := getFinalResult(vm, result)
 	if err != nil {
 		log.Printf("Error getting final result: %v\n", err)
+		return
+	}
+	if finalResult == nil || goja.IsUndefined(finalResult) || goja.IsNull(finalResult) {
+		log.Printf("Empty final result for %s\n", funcName)
 		return
 	}
 

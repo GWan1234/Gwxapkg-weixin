@@ -3,27 +3,88 @@ package cmd
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/25smoking/Gwxapkg/internal/analyzer"
+	"github.com/25smoking/Gwxapkg/internal/business"
 	. "github.com/25smoking/Gwxapkg/internal/cmd"
 	. "github.com/25smoking/Gwxapkg/internal/config"
+	"github.com/25smoking/Gwxapkg/internal/dataflow"
+	"github.com/25smoking/Gwxapkg/internal/doctor"
 	"github.com/25smoking/Gwxapkg/internal/key"
 	packmeta "github.com/25smoking/Gwxapkg/internal/pack"
 	"github.com/25smoking/Gwxapkg/internal/packagecheck"
 	"github.com/25smoking/Gwxapkg/internal/reporter"
 	"github.com/25smoking/Gwxapkg/internal/restore"
+	"github.com/25smoking/Gwxapkg/internal/scanner"
 	"github.com/25smoking/Gwxapkg/internal/semantic"
 	"github.com/25smoking/Gwxapkg/internal/ui"
 	"github.com/25smoking/Gwxapkg/internal/util"
 )
+
+// ExecuteOptions 全量解包/分析流水线选项。
+type ExecuteOptions struct {
+	AppID      string
+	Input      string
+	OutputDir  string
+	FileExt    string
+	Restore    bool
+	Pretty     bool
+	NoClean    bool
+	Save       bool
+	Sensitive  bool
+	Postman    bool
+	Workspace  bool
+	RuleTier   string
+	BaseURL    string
+	WriteDoctor bool
+	ExportSARIF bool
+	ExportOpenAPI bool
+	Rewrite    semantic.RewriteOptions
+}
 
 func Execute(appID, input, outputDir, fileExt string, restoreDir bool, pretty bool, noClean bool, save bool, sensitive bool, postman bool, workspace bool) *packagecheck.Report {
 	return ExecuteWithOptions(appID, input, outputDir, fileExt, restoreDir, pretty, noClean, save, sensitive, postman, workspace, semantic.DefaultRewriteOptions())
 }
 
 func ExecuteWithOptions(appID, input, outputDir, fileExt string, restoreDir bool, pretty bool, noClean bool, save bool, sensitive bool, postman bool, workspace bool, rewriteOptions semantic.RewriteOptions) *packagecheck.Report {
+	return ExecutePipeline(ExecuteOptions{
+		AppID:     appID,
+		Input:     input,
+		OutputDir: outputDir,
+		FileExt:   fileExt,
+		Restore:   restoreDir,
+		Pretty:    pretty,
+		NoClean:   noClean,
+		Save:      save,
+		Sensitive: sensitive,
+		Postman:   postman,
+		Workspace: workspace,
+		Rewrite:   rewriteOptions,
+		WriteDoctor: true,
+	})
+}
+
+// ExecutePipeline 执行完整解包分析流水线。
+func ExecutePipeline(opts ExecuteOptions) *packagecheck.Report {
+	appID := opts.AppID
+	input := opts.Input
+	outputDir := opts.OutputDir
+	fileExt := opts.FileExt
+	if fileExt == "" {
+		fileExt = ".wxapkg"
+	}
+	restoreDir := opts.Restore
+	pretty := opts.Pretty
+	noClean := opts.NoClean
+	save := opts.Save
+	sensitive := opts.Sensitive
+	postman := opts.Postman
+	workspace := opts.Workspace
+	rewriteOptions := opts.Rewrite
+
 	// 确定输出目录
 	if outputDir == "" {
 		outputDir = DetermineOutputDir(input, appID)
@@ -48,6 +109,8 @@ func ExecuteWithOptions(appID, input, outputDir, fileExt string, restoreDir bool
 	configManager.Set("sensitive", sensitive)
 	configManager.Set("postman", postman)
 	configManager.Set("workspace", workspace)
+	configManager.Set("ruleTier", opts.RuleTier)
+	configManager.Set("baseURL", opts.BaseURL)
 
 	inputFiles := ParseInput(input, fileExt)
 
@@ -63,6 +126,12 @@ func ExecuteWithOptions(appID, input, outputDir, fileExt string, restoreDir bool
 			sensitive = false
 			postman = false
 		} else {
+			scanOpts := scanner.DefaultScanOptions()
+			scanOpts.Tiers = scanner.ParseRuleTierSpec(opts.RuleTier)
+			scanner.SetGlobalScanOptions(scanOpts)
+			if len(scanOpts.Tiers) > 0 {
+				ui.Info("规则分层: %s", strings.Join(scanOpts.Tiers, ", "))
+			}
 			key.InitCollector(appID)
 		}
 	}
@@ -112,6 +181,7 @@ func ExecuteWithOptions(appID, input, outputDir, fileExt string, restoreDir bool
 	ui.Step(2, 2, "还原工程结构...")
 	restore.ProjectStructure(outputDir, restoreDir)
 
+	var semanticAPIMap *semantic.APIMapReport
 	if restoreDir {
 		printASTRenameNotice(rewriteOptions.ASTRename)
 		semanticReport, err := semantic.RewriteProjectWithOptions(outputDir, rewriteOptions)
@@ -145,6 +215,10 @@ func ExecuteWithOptions(appID, input, outputDir, fileExt string, restoreDir bool
 					semanticReport.ASTRenamedFiles,
 				)
 			}
+			// 尝试加载 semantic api_map 供统一地图合并
+			if loaded, loadErr := loadSemanticAPIMap(outputDir); loadErr == nil {
+				semanticAPIMap = loaded
+			}
 		}
 	}
 
@@ -164,25 +238,35 @@ func ExecuteWithOptions(appID, input, outputDir, fileExt string, restoreDir bool
 	ui.Success("输出目录: %s", filepath.Clean(outputDir))
 
 	collector := key.GetCollector()
+	var scanReport *scanner.ScanReport
 	if collector != nil {
+		// 注意：此处统计的是输入包数量；文件级扫描数在 unpack worker 内累计不完整，保持兼容
 		collector.SetTotalFiles(len(inputFiles))
-		report := collector.GenerateReport()
+		scanReport = collector.GenerateReport()
 
-		if len(report.APIEndpoints) > 0 {
+		if len(scanReport.APIEndpoints) > 0 {
 			apiEndpointMapReporter := reporter.NewAPIEndpointMapReporter()
-			artifacts, err := apiEndpointMapReporter.Generate(report, outputDir, outputDir)
+			artifacts, err := apiEndpointMapReporter.Generate(scanReport, outputDir, outputDir)
 			if err != nil {
 				ui.Warning("生成通用 API Endpoint 地图失败: %v", err)
 			} else {
 				ui.Success("通用 API Endpoint 地图: %s", artifacts.MarkdownPath)
-				ui.Info("   - 通用 Endpoint: %d", len(report.APIEndpoints))
+				ui.Info("   - 通用 Endpoint: %d", len(scanReport.APIEndpoints))
 			}
+		}
+
+		if artifacts, err := reporter.GenerateUnifiedAPIMap(outputDir, outputDir, scanReport, semanticAPIMap); err != nil {
+			ui.Warning("生成统一 API 地图失败: %v", err)
+		} else if artifacts != nil {
+			ui.Success("统一 API 地图: %s", artifacts.MarkdownPath)
+			ui.Info("   - 统一端点: %d (semantic=%d http=%d merged=%d)",
+				artifacts.EndpointCount, artifacts.SemanticCount, artifacts.HTTPCount, artifacts.MergedCount)
 		}
 
 		if sensitive {
 			jsonReporter := reporter.NewJSONReporter()
 			jsonPath := filepath.Join(outputDir, "sensitive_report.json")
-			if err := jsonReporter.Generate(report, jsonPath); err != nil {
+			if err := jsonReporter.Generate(scanReport, jsonPath); err != nil {
 				ui.Warning("生成 JSON 报告失败: %v", err)
 			} else {
 				ui.Success("JSON 报告: %s", jsonPath)
@@ -190,7 +274,7 @@ func ExecuteWithOptions(appID, input, outputDir, fileExt string, restoreDir bool
 
 			excelReporter := reporter.NewExcelReporter()
 			excelPath := filepath.Join(outputDir, "sensitive_report.xlsx")
-			if err := excelReporter.Generate(report, excelPath); err != nil {
+			if err := excelReporter.Generate(scanReport, excelPath); err != nil {
 				ui.Warning("生成 Excel 报告失败: %v", err)
 			} else {
 				ui.Success("Excel 报告: %s", excelPath)
@@ -198,7 +282,7 @@ func ExecuteWithOptions(appID, input, outputDir, fileExt string, restoreDir bool
 
 			htmlReporter := reporter.NewHTMLReporter()
 			htmlPath := filepath.Join(outputDir, "sensitive_report.html")
-			if err := htmlReporter.Generate(report, htmlPath); err != nil {
+			if err := htmlReporter.Generate(scanReport, htmlPath); err != nil {
 				ui.Warning("生成 HTML 报告失败: %v", err)
 			} else {
 				ui.Success("HTML 报告: %s", htmlPath)
@@ -208,22 +292,40 @@ func ExecuteWithOptions(appID, input, outputDir, fileExt string, restoreDir bool
 		if postman {
 			postmanReporter := reporter.NewPostmanReporter()
 			postmanPath := filepath.Join(outputDir, "api_collection.postman_collection.json")
-			if err := postmanReporter.Generate(report, postmanPath); err != nil {
+			if err := postmanReporter.GenerateWithOptions(scanReport, postmanPath, reporter.PostmanOptions{BaseURL: opts.BaseURL}); err != nil {
 				ui.Warning("生成 Postman Collection 失败: %v", err)
 			} else {
 				ui.Success("Postman Collection: %s", postmanPath)
 			}
 		}
 
+		if opts.ExportSARIF && scanReport != nil {
+			sarifPath := filepath.Join(outputDir, "sensitive_report.sarif")
+			if err := reporter.GenerateSARIF(scanReport, sarifPath); err != nil {
+				ui.Warning("生成 SARIF 失败: %v", err)
+			} else {
+				ui.Success("SARIF 报告: %s", sarifPath)
+			}
+		}
+
+		if opts.ExportOpenAPI {
+			openAPIPath := filepath.Join(outputDir, "openapi.json")
+			if err := reporter.GenerateOpenAPIFromDir(outputDir, openAPIPath, opts.BaseURL); err != nil {
+				ui.Warning("生成 OpenAPI 失败: %v", err)
+			} else {
+				ui.Success("OpenAPI: %s", openAPIPath)
+			}
+		}
+
 		if sensitive || postman {
-			ui.Info("   - 接口数: %d", len(report.APIEndpoints))
-			ui.Info("   - 混淆文件: %d", len(report.ObfuscatedFiles))
+			ui.Info("   - 接口数: %d", len(scanReport.APIEndpoints))
+			ui.Info("   - 混淆文件: %d", len(scanReport.ObfuscatedFiles))
 		}
 		if sensitive {
-			ui.Info("   - 总匹配数: %d", report.Summary.TotalMatches)
-			ui.Info("   - 去重后: %d", report.Summary.UniqueMatches)
+			ui.Info("   - 总匹配数: %d", scanReport.Summary.TotalMatches)
+			ui.Info("   - 去重后: %d", scanReport.Summary.UniqueMatches)
 			ui.Info("   - 高风险: %d | 中风险: %d | 低风险: %d",
-				report.Summary.HighRisk, report.Summary.MediumRisk, report.Summary.LowRisk)
+				scanReport.Summary.HighRisk, scanReport.Summary.MediumRisk, scanReport.Summary.LowRisk)
 		}
 
 		key.ResetCollector()
@@ -233,29 +335,58 @@ func ExecuteWithOptions(appID, input, outputDir, fileExt string, restoreDir bool
 		routeManifest, routeErr := analyzer.AnalyzeMiniProgram(outputDir, appID)
 		if routeErr != nil {
 			ui.Warning("生成页面与路由地图失败: %v", routeErr)
-			return completenessReport
+		} else {
+			routeReporter := reporter.NewRouteReporter()
+			artifacts, err := routeReporter.Generate(routeManifest, outputDir)
+			if err != nil {
+				ui.Warning("写入页面与路由地图失败: %v", err)
+			} else {
+				ui.Success("页面路由清单: %s", artifacts.ManifestPath)
+				ui.Success("页面路由说明: %s", artifacts.MarkdownPath)
+				ui.Success("页面路由图: %s", artifacts.MermaidPath)
+				ui.Info("   - 页面数: %d | 跳转边: %d | 调用链边: %d | 共享助手: %d | TabBar: %d",
+					routeManifest.Summary.TotalPages,
+					routeManifest.Summary.NavigationEdgeCount,
+					routeManifest.Summary.CallChainEdgeCount,
+					routeManifest.Summary.SharedRouterHelperCount,
+					routeManifest.Summary.TabBarPages,
+				)
+			}
 		}
+	}
 
-		routeReporter := reporter.NewRouteReporter()
-		artifacts, err := routeReporter.Generate(routeManifest, outputDir)
-		if err != nil {
-			ui.Warning("写入页面与路由地图失败: %v", err)
-			return completenessReport
+	if restoreDir {
+		if df, err := dataflow.AnalyzeAndWrite(outputDir); err != nil {
+			ui.Warning("生成 dataflow hints 失败: %v", err)
+		} else if df != nil && df.HintCount > 0 {
+			ui.Success("数据流线索: %s (%d)", df.JSONPath, df.HintCount)
 		}
+	}
 
-		ui.Success("页面路由清单: %s", artifacts.ManifestPath)
-		ui.Success("页面路由说明: %s", artifacts.MarkdownPath)
-		ui.Success("页面路由图: %s", artifacts.MermaidPath)
-		ui.Info("   - 页面数: %d | 跳转边: %d | 调用链边: %d | 共享助手: %d | TabBar: %d",
-			routeManifest.Summary.TotalPages,
-			routeManifest.Summary.NavigationEdgeCount,
-			routeManifest.Summary.CallChainEdgeCount,
-			routeManifest.Summary.SharedRouterHelperCount,
-			routeManifest.Summary.TabBarPages,
-		)
+	// 业务漏洞面：依赖 unified map + route_manifest，放在路由分析之后
+	if restoreDir {
+		if surface, err := business.AnalyzeAndWrite(outputDir); err != nil {
+			ui.Warning("生成业务漏洞面失败: %v", err)
+		} else if surface != nil {
+			ui.Success("业务漏洞面: %s", surface.MarkdownPath)
+			ui.Info("   - 打标接口: %d | 页面: %d | 假设: %d",
+				len(surface.Endpoints), len(surface.Pages), len(surface.Hypotheses))
+		}
+	}
+
+	if opts.WriteDoctor || restoreDir {
+		if health, err := doctor.AnalyzeAndWrite(outputDir); err != nil {
+			ui.Warning("生成 doctor 报告失败: %v", err)
+		} else if health != nil {
+			ui.Success("Doctor 报告: %s (status=%s)", health.MarkdownPath, health.Status)
+		}
 	}
 
 	return completenessReport
+}
+
+func loadSemanticAPIMap(rootDir string) (*semantic.APIMapReport, error) {
+	return semantic.ReadAPIMap(rootDir)
 }
 
 func printASTRenameNotice(options semantic.ASTRenameOptions) {

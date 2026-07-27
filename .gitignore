@@ -1,3 +1,7 @@
 .DS_Store
 dist/
 config/rule.yaml
+output/
+gwxapkg
+tmpcmd/
+*.exe

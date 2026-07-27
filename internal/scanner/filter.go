@@ -256,31 +256,29 @@ func hasValidTLD(domain string) bool {
 	return validTLDs[tld]
 }
 
+// 预编译 JS API 语境检测，避免每次误报判断都重新 Compile。
+var jsAPIContextPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`Date\.`),
+	regexp.MustCompile(`Math\.`),
+	regexp.MustCompile(`Object\.`),
+	regexp.MustCompile(`Array\.`),
+	regexp.MustCompile(`document\.`),
+	regexp.MustCompile(`window\.`),
+	regexp.MustCompile(`console\.`),
+	regexp.MustCompile(`JSON\.`),
+	regexp.MustCompile(`Promise\.`),
+	regexp.MustCompile(`Number\.`),
+	regexp.MustCompile(`String\.`),
+	regexp.MustCompile(`Boolean\.`),
+}
+
 // isJavaScriptAPI 判断是否是 JS API
 func isJavaScriptAPI(content, context string) bool {
-	// 常见的 JS API 模式
-	jsPatterns := []string{
-		"Date\\.",
-		"Math\\.",
-		"Object\\.",
-		"Array\\.",
-		"document\\.",
-		"window\\.",
-		"console\\.",
-		"JSON\\.",
-		"Promise\\.",
-		"Number\\.",
-		"String\\.",
-		"Boolean\\.",
-	}
-
-	for _, pattern := range jsPatterns {
-		matched, _ := regexp.MatchString(pattern, context)
-		if matched {
+	for _, pattern := range jsAPIContextPatterns {
+		if pattern.MatchString(context) {
 			return true
 		}
 	}
-
 	return false
 }
 

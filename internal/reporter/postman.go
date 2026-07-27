@@ -3,8 +3,10 @@ package reporter
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/25smoking/Gwxapkg/internal/scanner"
 )
@@ -68,8 +70,18 @@ type postmanQuery struct {
 	Value string `json:"value"`
 }
 
+// PostmanOptions 控制 Postman 导出细节。
+type PostmanOptions struct {
+	BaseURL string
+}
+
 // Generate 生成 Postman Collection v2.1
 func (r *PostmanReporter) Generate(report *scanner.ScanReport, filename string) error {
+	return r.GenerateWithOptions(report, filename, PostmanOptions{})
+}
+
+// GenerateWithOptions 支持 base URL 拼接。
+func (r *PostmanReporter) GenerateWithOptions(report *scanner.ScanReport, filename string, opts PostmanOptions) error {
 	if report == nil {
 		return fmt.Errorf("报告为空")
 	}
@@ -83,7 +95,7 @@ func (r *PostmanReporter) Generate(report *scanner.ScanReport, filename string) 
 	}
 
 	for _, endpoint := range report.APIEndpoints {
-		collection.Item = append(collection.Item, buildPostmanItem(endpoint))
+		collection.Item = append(collection.Item, buildPostmanItem(endpoint, opts.BaseURL))
 	}
 
 	data, err := json.MarshalIndent(collection, "", "  ")
@@ -102,9 +114,40 @@ func (r *PostmanReporter) Generate(report *scanner.ScanReport, filename string) 
 	return nil
 }
 
-func buildPostmanItem(endpoint scanner.APIEndpoint) postmanItem {
+func buildPostmanItem(endpoint scanner.APIEndpoint, baseURL string) postmanItem {
+	raw := endpoint.RawURL
+	if baseURL != "" && isRelativeAPIURL(raw) {
+		raw = joinBaseURL(baseURL, raw)
+	}
+
 	requestURL := postmanRequestURL{
-		Raw: endpoint.RawURL,
+		Raw: raw,
+	}
+	if parsed, err := url.Parse(raw); err == nil && parsed.Scheme != "" {
+		if parsed.Host != "" {
+			requestURL.Host = []string{parsed.Host}
+		}
+		if parsed.Path != "" {
+			parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+			if len(parts) == 1 && parts[0] == "" {
+				requestURL.Path = []string{}
+			} else {
+				requestURL.Path = parts
+			}
+		}
+		if parsed.RawQuery != "" {
+			for _, pair := range strings.Split(parsed.RawQuery, "&") {
+				if pair == "" {
+					continue
+				}
+				kv := strings.SplitN(pair, "=", 2)
+				q := postmanQuery{Key: kv[0]}
+				if len(kv) > 1 {
+					q.Value = kv[1]
+				}
+				requestURL.Query = append(requestURL.Query, q)
+			}
+		}
 	}
 
 	return postmanItem{
@@ -115,4 +158,24 @@ func buildPostmanItem(endpoint scanner.APIEndpoint) postmanItem {
 			URL:    requestURL,
 		},
 	}
+}
+
+func isRelativeAPIURL(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return false
+	}
+	return !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://")
+}
+
+func joinBaseURL(base, path string) string {
+	base = strings.TrimRight(strings.TrimSpace(base), "/")
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return base
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return base + path
 }

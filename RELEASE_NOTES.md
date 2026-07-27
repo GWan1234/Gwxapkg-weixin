@@ -1,3 +1,123 @@
+# Release v2.8.0
+
+## 版本概览
+
+`v2.8.0` 将 Gwxapkg 从「解包 + 敏感扫描」推进为 **LLM 可消费的小程序安全审计工作台**：业务漏洞面预筛、统一 API 地图、doctor/audit 骨架、授权活体探测与分层 finding 状态。
+
+**默认行为兼容**：AST 默认仍为 `deep`；敏感扫描默认全量规则；**默认不联网**。活体探测必须显式 `-i-authorize-live=true`。
+
+---
+
+## 重点更新
+
+### 1. 业务漏洞面（LLM 主证据）
+
+- 新增 `.gwxapkg/business_surface.json` / `.md`
+- 业务标签：`auth` `sms` `idor` `profile` `order` `cert` `payment` `upload` `share` `webview` `plugin`
+- 产出：打标接口/页面、源码信号、业务假设、LLM 必查清单
+- `api_unified_map` 回写 `business_tags` / `risk_hints`
+- `all` / `scan-only` 在路由分析后自动生成；`audit` 并入 `BIZ-*` findings
+
+### 2. Finding 状态语义（静态 vs 活体）
+
+| status | 含义 |
+|--------|------|
+| `confirmed_static` | 仅前端源码即可认定（如开放 WebView） |
+| `needs_server_validation` | 源码有攻击面，结论依赖后端 |
+| `unauth_denied` | 活体：匿名被拒（**≠ 无洞**） |
+| `auth_idor_untested` | 匿名被拒或未提供 token，登录后越权未测 |
+| `confirmed` | 活体响应证实风险 |
+| `false_positive` | 在已执行探测范围内充分否定 |
+| `inconclusive` / `skipped` | 证据不足或安全策略跳过 |
+
+- 字段 `validation_layer`：`static` / `live` / `mixed`
+- **禁止**将「匿名访问被拒」写成 false_positive 误导为「无漏洞」
+- 活体探测**不会降级** `confirmed_static`
+
+### 3. 授权活体验证
+
+```bash
+gwxapkg validate -dir=<已解包目录> -base-url=https://api.example.com \
+  -i-authorize-live=true [-token=...] [-token-b=...] [-probe-ids=1,2] [-dry-run]
+```
+
+- 别名：`live`
+- 探测：未授权访问 / 鉴权基线 / 对象 ID 替换
+- 安全默认：跳过短信发送、支付创建、删除、上传等破坏性路径
+- 产物：`.gwxapkg/validation_report.json/.md`、`validation_requests.jsonl`
+- 回写：`ai_audit/findings.json`、`business_surface` 假设状态
+
+### 4. doctor / audit
+
+- `gwxapkg doctor|summary -dir=`：产物健康检查与覆盖缺口
+- `gwxapkg audit -dir= [-fix=true]`：确定性审计骨架（不调用 LLM）
+  - `findings.json` / `business_hypotheses.json` / `business_checklist.md`
+  - `security_report.md` / `coverage_gaps.md` / `evidence_table.md`
+- 全量流水线结束默认写 doctor 报告
+
+### 5. 扫描与 API 地图
+
+- 规则分层：`-rule-tier=all|high|medium|critical,noise`
+- 扫描预过滤、API 廉价预检、超长行 high+ 分块、`scan-only` worker 并发
+- `.gwxapkg/api_unified_map.json/.md`（semantic + HTTP endpoint 合并）
+- AST request 提取（`source_rule=ast-request`，支持 base+path）
+- Postman：`-base-url`；可选 `-sarif` / `-openapi`
+- `.gwxapkg/dataflow_hints.json`：storage/token、crypto→request 共现线索
+
+### 6. watch / CLI / 工程化
+
+- `-watch` / `-watch=listen` / **`-watch=auto`**（捕获新包后自动解包）
+- `gwxapkg version`；`cmd.ExecutePipeline` + `ExecuteOptions`
+- 用户配置：`./.gwxapkg.yaml` / `~/.gwxapkg.yaml`
+- CI/Release Go **1.23**
+- 修复 WXML 还原 `nil` 空指针（真实样本解包稳定性）
+
+### 7. AI Skill
+
+- `skills/gwxapkg-ai-audit`：优先读 `business_surface`，按 auth→idor→payment→upload/share/webview 强制检查
+- 状态语义表写入 skill，避免 LLM 误判 `unauth_denied`
+
+---
+
+## 推荐工作流
+
+```bash
+# 1) 解包（默认含业务面 + doctor）
+./gwxapkg all -id=<AppID> -out=./output/<AppID>
+
+# 2) 审计骨架
+./gwxapkg audit -dir=./output/<AppID> -fix=true
+
+# 3) 授权活体（可选）
+./gwxapkg validate -dir=./output/<AppID> \
+  -base-url=https://api.example.com \
+  -i-authorize-live=true \
+  -token='Bearer <token>' -token-b='Bearer <tokenB>'
+
+# 4) 交给 Hermes/Codex/Claude 使用 gwxapkg-ai-audit skill 出终稿
+```
+
+---
+
+## 兼容性说明
+
+- 不改变默认 AST `deep` 策略
+- 默认敏感扫描仍为全量规则（未指定 `-rule-tier`）
+- 默认不发送网络请求；`validate` 需显式授权
+- 既有 `scan` / `all` / `semantic` / `api-link` / `repack` 命令保留
+
+---
+
+## 验证
+
+```bash
+go test ./...
+go build -ldflags="-s -w" -o gwxapkg .
+./gwxapkg version   # 2.8.0
+```
+
+---
+
 # Release v2.7.4
 
 ## 版本概览

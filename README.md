@@ -2,8 +2,8 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-2.7.4-blue.svg)
-![Go Version](https://img.shields.io/badge/go-%3E%3D1.21-00ADD8.svg)
+![Version](https://img.shields.io/badge/version-2.8.0-blue.svg)
+![Go Version](https://img.shields.io/badge/go-%3E%3D1.23-00ADD8.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)
 ![Build](https://img.shields.io/badge/build-passing-brightgreen.svg)
@@ -149,6 +149,22 @@ go run . -h
 
 # 对已解包目录独立扫描，并额外导出 Postman Collection
 ./gwxapkg scan-only -dir=<目录> -format=both -postman
+
+# 只扫高优先级规则，并导出 SARIF / OpenAPI
+./gwxapkg scan-only -dir=<目录> -rule-tier=high -sarif -openapi -base-url=https://api.example.com
+
+# 产物健康检查 / 确定性审计骨架（含业务漏洞面 auth/idor/payment/...）
+./gwxapkg doctor -dir=<已解包目录>
+./gwxapkg audit -dir=<已解包目录> -fix=true
+# 业务面产物：.gwxapkg/business_surface.md 与 ai_audit/findings.json 中的 BIZ-*
+
+# 授权活体探测（自动发请求并回写 confirmed/false_positive）
+./gwxapkg validate -dir=output/<AppID> -base-url=https://api.example.com \
+  -i-authorize-live=true -token=<登录token> -token-b=<第二账号token可选> -probe-ids=1,2
+# 可先 dry-run：./gwxapkg validate -dir=... -base-url=... -i-authorize-live=true -dry-run
+
+# 缺失分包：捕获后自动解包合并
+./gwxapkg all -id=<AppID> -watch=auto
 
 # 重新打包
 ./gwxapkg repack -in=<目录路径>
@@ -383,20 +399,29 @@ output/
 
 ---
 
-## 📈 性能对比（v2.7.4 vs v1.0）
+## 📈 性能对比（v2.8.0 vs v1.0）
 
-| 指标 | v1.0 | v2.7.4 | 改进 |
+| 指标 | v1.0 | v2.8.0 | 改进 |
 |------|------|--------|------|
-| **扫描速度** | 基准 | +50-70% | ⬆️⬆️⬆️ 规则预编译 |
-| **误报控制** | 基础正则直扫 | 多层过滤收敛 | ✅ 黑名单 + 上下文 + 占位符 + 弱值过滤 |  
-| **数据量** | 127,185条 | ~3,000条 | ⬇️⬇️⬇️ 去重+过滤 |
-| **输出格式** | JSON | JSON/Excel/HTML | ✅ 机器可读 + 交互式报告 |
-| **并发性能** | 10固定 | CPU*2动态 | ⬆️⬆️ 自适应 |
-| **I/O性能** | 直接写入 | 256KB缓冲 | ⬆️⬆️ 减少系统调用 |
+| **扫描速度** | 基准 | +50-70% + 规则分层 | ⬆️ 规则预编译 / `-rule-tier` |
+| **误报控制** | 基础正则直扫 | 多层过滤 + 状态语义 | ✅ 黑名单 + 占位符 + finding 分层 |
+| **数据量** | 127,185条 | ~3,000条 | ⬇️ 去重+过滤 |
+| **输出格式** | JSON | JSON/Excel/HTML/SARIF/OpenAPI + 业务面 | ✅ 机器可读 + LLM 友好 |
+| **并发性能** | 10固定 | CPU*2动态 | ⬆️ 自适应 |
+| **I/O性能** | 直接写入 | 256KB缓冲 | ⬆️ 减少系统调用 |
 
 ---
 
 ## 🔄 版本更新
+
+### v2.8.0 - 业务漏洞面 + 授权活体验证 + LLM 审计工作台
+
+详见 [RELEASE_NOTES.md](RELEASE_NOTES.md)。
+
+- 业务面 `business_surface`（auth/idor/payment/upload/share/webview…）
+- `audit` / `doctor` / `validate` 子命令
+- finding 状态：`confirmed_static` / `auth_idor_untested` / `unauth_denied` 等
+- 统一 API 地图、规则分层、SARIF/OpenAPI、watch=auto
 
 ### v2.7.4 (2026-05-15) - 🤖 Gwxapkg AI 审计 Skill、JSON 证据包与分包完整性检测
 
