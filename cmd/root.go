@@ -26,23 +26,24 @@ import (
 
 // ExecuteOptions 全量解包/分析流水线选项。
 type ExecuteOptions struct {
-	AppID      string
-	Input      string
-	OutputDir  string
-	FileExt    string
-	Restore    bool
-	Pretty     bool
-	NoClean    bool
-	Save       bool
-	Sensitive  bool
-	Postman    bool
-	Workspace  bool
-	RuleTier   string
-	BaseURL    string
-	WriteDoctor bool
-	ExportSARIF bool
+	AppID         string
+	Input         string
+	OutputDir     string
+	FileExt       string
+	Restore       bool
+	Pretty        bool
+	NoClean       bool
+	Save          bool
+	Sensitive     bool
+	Postman       bool
+	Workspace     bool
+	Fast          bool
+	RuleTier      string
+	BaseURL       string
+	WriteDoctor   bool
+	ExportSARIF   bool
 	ExportOpenAPI bool
-	Rewrite    semantic.RewriteOptions
+	Rewrite       semantic.RewriteOptions
 }
 
 func Execute(appID, input, outputDir, fileExt string, restoreDir bool, pretty bool, noClean bool, save bool, sensitive bool, postman bool, workspace bool) *packagecheck.Report {
@@ -51,18 +52,18 @@ func Execute(appID, input, outputDir, fileExt string, restoreDir bool, pretty bo
 
 func ExecuteWithOptions(appID, input, outputDir, fileExt string, restoreDir bool, pretty bool, noClean bool, save bool, sensitive bool, postman bool, workspace bool, rewriteOptions semantic.RewriteOptions) *packagecheck.Report {
 	return ExecutePipeline(ExecuteOptions{
-		AppID:     appID,
-		Input:     input,
-		OutputDir: outputDir,
-		FileExt:   fileExt,
-		Restore:   restoreDir,
-		Pretty:    pretty,
-		NoClean:   noClean,
-		Save:      save,
-		Sensitive: sensitive,
-		Postman:   postman,
-		Workspace: workspace,
-		Rewrite:   rewriteOptions,
+		AppID:       appID,
+		Input:       input,
+		OutputDir:   outputDir,
+		FileExt:     fileExt,
+		Restore:     restoreDir,
+		Pretty:      pretty,
+		NoClean:     noClean,
+		Save:        save,
+		Sensitive:   sensitive,
+		Postman:     postman,
+		Workspace:   workspace,
+		Rewrite:     rewriteOptions,
 		WriteDoctor: true,
 	})
 }
@@ -83,7 +84,13 @@ func ExecutePipeline(opts ExecuteOptions) *packagecheck.Report {
 	sensitive := opts.Sensitive
 	postman := opts.Postman
 	workspace := opts.Workspace
+	fast := opts.Fast
 	rewriteOptions := opts.Rewrite
+	if fast {
+		// 纯反编译对标模式：不初始化扫描器，也不执行后续审计产物链。
+		sensitive = false
+		postman = false
+	}
 
 	// 确定输出目录
 	if outputDir == "" {
@@ -94,6 +101,14 @@ func ExecutePipeline(opts ExecuteOptions) *packagecheck.Report {
 		ui.Warning("展开输出目录失败，继续使用原路径: %v", err)
 	} else {
 		outputDir = expandedOutputDir
+	}
+	// 后续分包恢复会并行执行。统一使用绝对路径，避免任一解析器因相对
+	// 路径或当前工作目录变化而把文件写到 -out 的上一级。
+	if absoluteOutputDir, absErr := filepath.Abs(outputDir); absErr != nil {
+		ui.Error("解析输出目录失败: %v", absErr)
+		return nil
+	} else {
+		outputDir = absoluteOutputDir
 	}
 
 	// 存储配置
@@ -109,6 +124,7 @@ func ExecutePipeline(opts ExecuteOptions) *packagecheck.Report {
 	configManager.Set("sensitive", sensitive)
 	configManager.Set("postman", postman)
 	configManager.Set("workspace", workspace)
+	configManager.Set("fast", fast)
 	configManager.Set("ruleTier", opts.RuleTier)
 	configManager.Set("baseURL", opts.BaseURL)
 
@@ -180,6 +196,12 @@ func ExecutePipeline(opts ExecuteOptions) *packagecheck.Report {
 	// 还原工程目录结构
 	ui.Step(2, 2, "还原工程结构...")
 	restore.ProjectStructure(outputDir, restoreDir)
+	if fast {
+		fmt.Println()
+		ui.Success("快速反编译完成: %s", filepath.Clean(outputDir))
+		ui.Info("   - 已跳过敏感扫描、语义重写、路由/业务面与 doctor 后处理")
+		return nil
+	}
 
 	var semanticAPIMap *semantic.APIMapReport
 	if restoreDir {

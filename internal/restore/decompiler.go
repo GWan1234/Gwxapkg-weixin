@@ -158,32 +158,6 @@ func setApp(wxapkg *config.WxapkgInfo) {
 		wxapkg.Parsers = append(wxapkg.Parsers, &unpack.XmlParser{OutputDir: OutputDir, Version: "v2"})
 	}
 
-	// 清除无用文件
-	cleanApp(wxapkg.SourcePath)
-}
-
-func cleanApp(path string) {
-	// 创建文件删除管理器
-	manager := config.NewFileDeletionManager()
-
-	// 删除相关的JS文件, unlinks
-	unlinks := []string{
-		//".appservice.js",
-		"appservice.js",
-		"app-config.json",
-		"app-service.js",
-		"app-wxss.js",
-		"appservice.app.js",
-		"common.app.js",
-		"page-frame.js",
-		"page-frame.html",
-		"pageframe.js",
-		"webview.app.js",
-		"subContext.js",
-		"plugin.js",
-	}
-
-	for _, unlink := range unlinks {
-		manager.AddFile(filepath.Join(path, unlink))
-	}
+	// 原始运行时文件同时是后续兼容分析和问题追溯的证据。
+	// 不再默认删除 app-config.json、app-service.js、app-wxss.js 等解包原文件。
 }

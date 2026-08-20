@@ -3,6 +3,7 @@ package restore
 import (
 	"encoding/json"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -20,17 +21,60 @@ func fixSubpackageDir(wxapkg *config.WxapkgInfo, outputDir string) string {
 	content, _ := os.ReadFile(filepath.Join(outputDir, enum.App_Config))
 	_ = json.Unmarshal(content, &e)
 
+	// 包内文件名在解包阶段已被规范为相对路径；旧实现却把分包 root
+	// 强制改成了以 / 开头的路径，导致匹配永远失败。随后 SourcePath 变成
+	// 空字符串，解析器便会以进程当前工作目录写入文件。
+	sourcePath := normalizePackageRelativePath(wxapkg.SourcePath)
 	for _, subPackage := range e.SubPackages {
-		root := subPackage.Root
-		if !strings.HasPrefix(root, "/") {
-			root = "/" + root
+		root := normalizePackageRelativePath(subPackage.Root)
+		if root == "" {
+			continue
 		}
-		if strings.HasPrefix(wxapkg.SourcePath, root) {
-			return filepath.Join(outputDir, root)
+		if isPathInSubpackage(sourcePath, root) || hasFileInSubpackage(wxapkg.RawFiles, root) {
+			return filepath.Join(outputDir, filepath.FromSlash(root))
 		}
 	}
 
-	return ""
+	// 即使包元数据异常，也绝不返回空目录，避免任何解析器退回到当前工作目录。
+	// 有目录信息时仍可在输出目录内做保守恢复。
+	if dir := pathDirWithinOutput(sourcePath); dir != "" {
+		return filepath.Join(outputDir, filepath.FromSlash(dir))
+	}
+	return outputDir
+}
+
+func normalizePackageRelativePath(value string) string {
+	value = strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
+	value = strings.Trim(value, "/")
+	if value == "" {
+		return ""
+	}
+	value = path.Clean(value)
+	if value == "." || value == ".." || strings.HasPrefix(value, "../") {
+		return ""
+	}
+	return strings.TrimPrefix(value, "./")
+}
+
+func isPathInSubpackage(filePath, root string) bool {
+	return filePath == root || strings.HasPrefix(filePath, root+"/")
+}
+
+func hasFileInSubpackage(files []string, root string) bool {
+	for _, file := range files {
+		if isPathInSubpackage(normalizePackageRelativePath(file), root) {
+			return true
+		}
+	}
+	return false
+}
+
+func pathDirWithinOutput(filePath string) string {
+	dir := filepath.ToSlash(filepath.Dir(filepath.FromSlash(filePath)))
+	if dir == "." || dir == "/" || strings.HasPrefix(dir, "../") {
+		return ""
+	}
+	return strings.Trim(dir, "/")
 }
 
 // ProjectStructure 是否还原工程目录结构
