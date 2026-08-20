@@ -32,7 +32,7 @@ func Banner() {
  ██║   ██║██║███╗██║ ██╔██╗ ██╔══██║██╔═══╝ ██╔═██╗ ██║   ██║
  ╚██████╔╝╚███╔███╔╝██╔╝ ██╗██║  ██║██║     ██║  ██╗╚██████╔╝
   ╚═════╝  ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝  ╚═╝ ╚═════╝`)
-	dim.Println("              Wxapkg Decompiler Tool v2.8.0")
+	dim.Println("              Wxapkg Decompiler Tool v2.8.1")
 	fmt.Println()
 }
 
@@ -170,6 +170,7 @@ func PrintUsage() {
 	dim.Println("  -out         输出目录")
 	dim.Println("  -restore     还原目录结构 (默认: true)")
 	dim.Println("  -pretty      美化代码输出 (默认: true)")
+	dim.Println("  -fast        快速反编译，跳过安全扫描与审计后处理")
 	dim.Println("  -noClean     保留中间文件 (默认: false)")
 	dim.Println("  -save        保存解密文件 (默认: false)")
 	dim.Println("  -sensitive   获取敏感数据 (默认: true)")

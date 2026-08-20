@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/25smoking/Gwxapkg/internal/config"
 	"github.com/dop251/goja/ast"
 	"github.com/dop251/goja/parser"
 )
@@ -32,6 +33,36 @@ func TestAnalyzeJavaScriptRecoversPanic(t *testing.T) {
 	}
 	if result.Status != "skipped" {
 		t.Fatalf("panic 后状态应为 skipped，got %q", result.Status)
+	}
+}
+
+func TestJSFormatterFastModeSkipsDeobfuscation(t *testing.T) {
+	configManager := config.NewSharedConfigManager()
+	configManager.Set("fast", true)
+	configManager.Set("pretty", false)
+	t.Cleanup(func() {
+		configManager.Delete("fast")
+		configManager.Delete("pretty")
+	})
+
+	originalCore := analyzeJavaScriptCore
+	t.Cleanup(func() { analyzeJavaScriptCore = originalCore })
+	called := false
+	analyzeJavaScriptCore = func(input []byte, filePath string) (*DeobfuscationResult, error) {
+		called = true
+		return &DeobfuscationResult{Content: input}, nil
+	}
+
+	input := []byte("  var answer=42;  ")
+	output, result, err := NewJSFormatter().FormatFile(input, "pages/index.js")
+	if err != nil {
+		t.Fatalf("快速格式化失败: %v", err)
+	}
+	if called {
+		t.Fatal("快速反编译不应进入 AST/运行时反混淆")
+	}
+	if result != nil || string(output) != "var answer=42;" {
+		t.Fatalf("快速模式应保留原始 JS 语义: result=%#v output=%q", result, output)
 	}
 }
 

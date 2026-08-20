@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -32,6 +33,7 @@ type PageConfig struct {
 type AppConfig struct {
 	Pages                          []string               `json:"pages"`
 	Window                         map[string]interface{} `json:"window,omitempty"`
+	UsingComponents                map[string]interface{} `json:"usingComponents,omitempty"`
 	TabBar                         map[string]interface{} `json:"tabBar,omitempty"`
 	NetworkTimeout                 map[string]interface{} `json:"networkTimeout,omitempty"`
 	SubPackages                    []SubPackage           `json:"subPackages,omitempty"`
@@ -42,8 +44,11 @@ type AppConfig struct {
 
 // SubPackage 存储子包配置
 type SubPackage struct {
-	Root  string   `json:"root"`
-	Pages []string `json:"pages"`
+	Root        string                 `json:"root"`
+	Pages       []string               `json:"pages"`
+	Name        string                 `json:"name,omitempty"`
+	Independent bool                   `json:"independent,omitempty"`
+	Plugins     map[string]interface{} `json:"plugins,omitempty"`
 }
 
 // changeExt 更改文件扩展名
@@ -88,10 +93,13 @@ func (p *ConfigParser) Parse(option config.WxapkgInfo) error {
 		Pages                          []string               `json:"pages"`
 		EntryPagePath                  string                 `json:"entryPagePath"`
 		Global                         map[string]interface{} `json:"global"`
+		Window                         map[string]interface{} `json:"window"`
+		UsingComponents                map[string]interface{} `json:"usingComponents"`
 		TabBar                         map[string]interface{} `json:"tabBar"`
 		NetworkTimeout                 map[string]interface{} `json:"networkTimeout"`
 		SubPackages                    []SubPackage           `json:"subPackages"`
 		NavigateToMiniProgramAppIdList []string               `json:"navigateToMiniProgramAppIdList"`
+		Workers                        string                 `json:"workers"`
 		ExtAppid                       string                 `json:"extAppid"`
 		Ext                            map[string]interface{} `json:"ext"`
 		Debug                          bool                   `json:"debug"`
@@ -103,29 +111,53 @@ func (p *ConfigParser) Parse(option config.WxapkgInfo) error {
 		return err
 	}
 
-	// 处理页面路径，将 entryPagePath 放在首位
-	k := e.Pages
-	entryIndex := indexOf(k, changeExt(e.EntryPagePath, ""))
-	k = append(k[:entryIndex], k[entryIndex+1:]...)
-	k = append([]string{changeExt(e.EntryPagePath, "")}, k...)
+	if e.Page == nil {
+		e.Page = make(map[string]PageConfig)
+	}
+
+	// 处理页面路径：新版基础库可能不再提供 entryPagePath，
+	// 或者 entryPagePath 不在 pages 中，不能因此越界崩溃。
+	k := normalizeConfigPagePaths(e.Pages)
+	entryPage := normalizeConfigPagePath(e.EntryPagePath)
+	if entryPage != "" {
+		if entryIndex := indexOf(k, entryPage); entryIndex >= 0 {
+			k = append(k[:entryIndex], k[entryIndex+1:]...)
+		}
+		k = append([]string{entryPage}, k...)
+	}
+	k = uniqueStrings(k)
+
+	window := e.Window
+	usingComponents := e.UsingComponents
+	if e.Global != nil {
+		if globalWindow, ok := e.Global["window"].(map[string]interface{}); ok {
+			window = globalWindow
+		}
+		if globalComponents, ok := e.Global["usingComponents"].(map[string]interface{}); ok {
+			usingComponents = globalComponents
+		}
+	}
 
 	// 构建应用配置
 	app := AppConfig{
-		Pages:          k,
-		Window:         e.Global["window"].(map[string]interface{}),
-		TabBar:         e.TabBar,
-		NetworkTimeout: e.NetworkTimeout,
+		Pages:           k,
+		Window:          window,
+		UsingComponents: usingComponents,
+		TabBar:          e.TabBar,
+		NetworkTimeout:  e.NetworkTimeout,
+		Workers:         e.Workers,
 	}
 
 	// 处理子包
 	if len(e.SubPackages) > 0 {
 		var subPackages []SubPackage
 		for _, subPackage := range e.SubPackages {
-			root := subPackage.Root
-			if !strings.HasSuffix(root, "/") {
-				root += "/"
+			root := normalizeConfigRelativePath(subPackage.Root)
+			if root == "" {
+				log.Printf("忽略包含非法路径的分包 root: %q", subPackage.Root)
+				continue
 			}
-			root = strings.TrimPrefix(root, "/")
+			root += "/"
 
 			var newPages []string
 			for i := 0; i < len(app.Pages); {
@@ -139,23 +171,15 @@ func (p *ConfigParser) Parse(option config.WxapkgInfo) error {
 				}
 			}
 
-			// 去除重复的页面
-			pageSet := make(map[string]struct{})
-			var uniquePages []string
-			for _, page := range newPages {
-				if _, exists := pageSet[page]; !exists {
-					pageSet[page] = struct{}{}
-					uniquePages = append(uniquePages, page)
-				}
+			// 部分包只在 subPackages.pages 中列页面，不会展开到顶层 pages。
+			// 此时必须保留包内原始清单，否则会伪造成空分包。
+			if len(newPages) == 0 {
+				newPages = normalizeConfigPagePaths(subPackage.Pages)
 			}
-			newPages = uniquePages
+			newPages = uniqueStrings(newPages)
 
 			subPackage.Root = root
-			if len(newPages) == 0 {
-				subPackage.Pages = []string{}
-			} else {
-				subPackage.Pages = newPages
-			}
+			subPackage.Pages = newPages
 			subPackages = append(subPackages, subPackage)
 		}
 		app.SubPackages = subPackages
@@ -186,24 +210,42 @@ func (p *ConfigParser) Parse(option config.WxapkgInfo) error {
 	}
 
 	// 处理页面中的组件路径
-	cur := "./file"
+	additionalPages := make(map[string]PageConfig)
 	for a, page := range e.Page {
 		if page.Window != nil && page.Window["usingComponents"] != nil {
-			for _, componentPath := range page.Window["usingComponents"].(map[string]interface{}) {
-				componentPath := componentPath.(string) + ".html"
+			components, ok := page.Window["usingComponents"].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			for _, rawComponentPath := range components {
+				componentPath, ok := rawComponentPath.(string)
+				if !ok || strings.TrimSpace(componentPath) == "" || strings.HasPrefix(componentPath, "plugin://") {
+					continue
+				}
+				componentPath += ".html"
 				file := componentPath
-				if filepath.IsAbs(componentPath) {
-					file = componentPath[1:]
+				if strings.HasPrefix(componentPath, "/") {
+					file = strings.TrimPrefix(componentPath, "/")
 				} else {
-					file = toDir(filepath.Join(filepath.Dir(a), componentPath), cur)
+					// 组件路径相对于声明组件的页面，而不是进程工作目录。
+					// 旧实现以 ./file 为基准计算 Rel，会额外生成 ../，使后续
+					// filepath.Join(dir, file) 写到指定输出目录的上一级。
+					file = path.Join(path.Dir(filepath.ToSlash(a)), filepath.ToSlash(componentPath))
+				}
+				file = normalizeConfigPagePath(file)
+				if file == "" {
+					log.Printf("忽略越界组件路径: 页面=%q, 组件=%q", a, rawComponentPath)
+					continue
 				}
 				if _, ok := e.Page[file]; !ok {
-					e.Page[file] = PageConfig{}
-				}
-				if e.Page[file].Window == nil {
-					e.Page[file] = PageConfig{Window: map[string]interface{}{"component": true}}
+					additionalPages[file] = PageConfig{Window: map[string]interface{}{"component": true}}
 				}
 			}
+		}
+	}
+	for name, page := range additionalPages {
+		if existing, ok := e.Page[name]; !ok || existing.Window == nil {
+			e.Page[name] = page
 		}
 	}
 
@@ -223,7 +265,9 @@ func (p *ConfigParser) Parse(option config.WxapkgInfo) error {
 				return err
 			}
 			for name, info := range attachInfo {
-				e.Page[changeExt(name, ".html")] = PageConfig{Window: info.(map[string]interface{})}
+				if window, ok := info.(map[string]interface{}); ok {
+					e.Page[changeExt(name, ".html")] = PageConfig{Window: window}
+				}
 			}
 		}
 
@@ -248,7 +292,9 @@ func (p *ConfigParser) Parse(option config.WxapkgInfo) error {
 					return err
 				}
 				for name, info := range attachInfo {
-					e.Page[changeExt(name, ".html")] = PageConfig{Window: info.(map[string]interface{})}
+					if window, ok := info.(map[string]interface{}); ok {
+						e.Page[changeExt(name, ".html")] = PageConfig{Window: window}
+					}
 				}
 			}
 		}
@@ -256,7 +302,12 @@ func (p *ConfigParser) Parse(option config.WxapkgInfo) error {
 
 	// 保存页面 JSON 文件
 	for a := range e.Page {
-		aFile := changeExt(a, ".json")
+		normalizedPage := normalizeConfigPagePath(a)
+		if normalizedPage == "" {
+			log.Printf("忽略越界页面配置路径: %q", a)
+			continue
+		}
+		aFile := changeExt(normalizedPage, ".json")
 		fileName := filepath.Join(dir, aFile)
 		if aFile != "app.json" {
 			windowContent, _ := json.MarshalIndent(e.Page[a].Window, "", "    ")
@@ -290,33 +341,60 @@ func (p *ConfigParser) Parse(option config.WxapkgInfo) error {
 
 	// 处理 TabBar 图标路径
 	if app.TabBar != nil && app.TabBar["list"] != nil {
-		var digests [][2]interface{}
-		for _, file := range scanDirByExt(dir, "") {
-			data, _ := os.ReadFile(file)
-			digests = append(digests, [2]interface{}{md5.Sum(data), file})
+		list, ok := app.TabBar["list"].([]interface{})
+		if !ok {
+			list = nil
+		}
+		needsInlineIconLookup := false
+		for _, rawItem := range list {
+			item, ok := rawItem.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if _, ok := item["iconData"].(string); ok {
+				needsInlineIconLookup = true
+			}
+			if _, ok := item["selectedIconData"].(string); ok {
+				needsInlineIconLookup = true
+			}
 		}
 
-		for _, e := range app.TabBar["list"].([]interface{}) {
-			pagePath := e.(map[string]interface{})["pagePath"].(string)
-			e.(map[string]interface{})["pagePath"] = changeExt(pagePath, "")
-			if iconData, ok := e.(map[string]interface{})["iconData"].(string); ok {
+		var digests [][2]interface{}
+		if needsInlineIconLookup {
+			for _, file := range scanDirByExt(dir, "") {
+				data, readErr := os.ReadFile(file)
+				if readErr == nil {
+					digests = append(digests, [2]interface{}{md5.Sum(data), file})
+				}
+			}
+		}
+
+		for _, rawItem := range list {
+			item, ok := rawItem.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if pagePath, ok := item["pagePath"].(string); ok {
+				item["pagePath"] = normalizeConfigPagePath(pagePath)
+			}
+			if iconData, ok := item["iconData"].(string); ok {
 				hash := md5.Sum([]byte(iconData))
 				for _, digest := range digests {
 					digestByte, _ := digest[0].([16]byte)
 					if bytes.Equal(hash[:], digestByte[:]) {
-						delete(e.(map[string]interface{}), "iconData")
-						e.(map[string]interface{})["iconPath"] = fixDir(digest[1].(string), dir)
+						delete(item, "iconData")
+						item["iconPath"] = fixDir(digest[1].(string), dir)
 						break
 					}
 				}
 			}
-			if selectedIconData, ok := e.(map[string]interface{})["selectedIconData"].(string); ok {
+			if selectedIconData, ok := item["selectedIconData"].(string); ok {
 				hash := md5.Sum([]byte(selectedIconData))
 				for _, digest := range digests {
 					digestByte, _ := digest[0].([16]byte)
 					if bytes.Equal(hash[:], digestByte[:]) {
-						delete(e.(map[string]interface{}), "selectedIconData")
-						e.(map[string]interface{})["selectedIconPath"] = fixDir(digest[1].(string), dir)
+						delete(item, "selectedIconData")
+						item["selectedIconPath"] = fixDir(digest[1].(string), dir)
 						break
 					}
 				}
@@ -354,6 +432,58 @@ func indexOf(slice []string, item string) int {
 	return -1
 }
 
+func normalizeConfigPagePath(page string) string {
+	page = normalizeConfigRelativePath(page)
+	if page == "" {
+		return ""
+	}
+	switch strings.ToLower(path.Ext(page)) {
+	case ".html", ".wxml", ".js", ".json":
+		return changeExt(page, "")
+	default:
+		return page
+	}
+}
+
+func normalizeConfigRelativePath(value string) string {
+	value = strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
+	value = strings.Trim(value, "/")
+	if value == "" {
+		return ""
+	}
+	value = path.Clean(value)
+	if value == "." || value == ".." || strings.HasPrefix(value, "../") {
+		return ""
+	}
+	return strings.TrimPrefix(value, "./")
+}
+
+func normalizeConfigPagePaths(pages []string) []string {
+	result := make([]string, 0, len(pages))
+	for _, page := range pages {
+		if normalized := normalizeConfigPagePath(page); normalized != "" {
+			result = append(result, normalized)
+		}
+	}
+	return result
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
 // fileExists 检查文件是否存在
 func fileExists(filename string) bool {
 	info, err := os.Stat(filename)
@@ -361,15 +491,6 @@ func fileExists(filename string) bool {
 		return false
 	}
 	return !info.IsDir()
-}
-
-// toDir 将文件路径转换为相对路径
-func toDir(file, base string) string {
-	relative, err := filepath.Rel(base, file)
-	if err != nil {
-		return file
-	}
-	return relative
 }
 
 // findMatches 查找所有匹配模式的字符串

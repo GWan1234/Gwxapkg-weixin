@@ -29,7 +29,7 @@ import (
 var loadedConfig *configfile.Config
 
 // 可通过 -ldflags "-X main.version=..." 注入
-var version = "2.8.0"
+var version = "2.8.1"
 
 func main() {
 	if cfg, path, err := configfile.Load(); err != nil {
@@ -103,6 +103,7 @@ func handleAllCommand(args []string) {
 	sensitive := allFlags.Bool("sensitive", true, "是否获取敏感数据")
 	postman := allFlags.Bool("postman", false, "是否导出 Postman Collection")
 	workspace := allFlags.Bool("workspace", false, "是否保留可精确回包的工作区")
+	fast := allFlags.Bool("fast", false, "快速反编译，跳过安全扫描与审计后处理")
 	watch := allFlags.String("watch", "", "分包监听: listen(只监听)/auto(捕获后自动解包)；布尔 true 等同 listen")
 	ruleTier := allFlags.String("rule-tier", "all", "敏感规则层级: all/high/medium 或 critical,high")
 	baseURL := allFlags.String("base-url", "", "Postman/OpenAPI 基础 URL")
@@ -231,6 +232,7 @@ func handleAllCommand(args []string) {
 					Sensitive:     *sensitive,
 					Postman:       *postman,
 					Workspace:     *workspace,
+					Fast:          *fast,
 					RuleTier:      *ruleTier,
 					BaseURL:       *baseURL,
 					ExportSARIF:   *sarif,
@@ -255,6 +257,7 @@ func handleAllCommand(args []string) {
 			Sensitive:     *sensitive,
 			Postman:       *postman,
 			Workspace:     *workspace,
+			Fast:          *fast,
 			RuleTier:      *ruleTier,
 			BaseURL:       *baseURL,
 			ExportSARIF:   *sarif,
@@ -273,6 +276,7 @@ func handleScanCommand(args []string) {
 	scanFlags := flag.NewFlagSet("scan", flag.ExitOnError)
 	verbose := scanFlags.Bool("verbose", false, "显示扫描候选路径诊断")
 	postman := scanFlags.Bool("postman", false, "是否导出 Postman Collection")
+	fast := scanFlags.Bool("fast", false, "快速反编译，跳过安全扫描与审计后处理")
 	watch := scanFlags.String("watch", "", "分包监听: listen/auto；布尔 true 等同 listen")
 	ruleTier := scanFlags.String("rule-tier", "all", "敏感规则层级: all/high/medium 或 critical,high")
 	baseURL := scanFlags.String("base-url", "", "Postman/OpenAPI 基础 URL")
@@ -350,6 +354,7 @@ func handleScanCommand(args []string) {
 				Pretty:      true,
 				Sensitive:   true,
 				Postman:     *postman,
+				Fast:        *fast,
 				RuleTier:    *ruleTier,
 				BaseURL:     *baseURL,
 				WriteDoctor: true,
@@ -372,6 +377,7 @@ func handleScanCommand(args []string) {
 		Pretty:      true,
 		Sensitive:   true,
 		Postman:     *postman,
+		Fast:        *fast,
 		RuleTier:    *ruleTier,
 		BaseURL:     *baseURL,
 		WriteDoctor: true,
@@ -1060,6 +1066,7 @@ func handleDefaultCommand() {
 	sensitive := flag.Bool("sensitive", true, "是否获取敏感数据")
 	postman := flag.Bool("postman", false, "是否导出 Postman Collection")
 	workspace := flag.Bool("workspace", false, "是否保留可精确回包的工作区")
+	fast := flag.Bool("fast", false, "快速反编译，跳过安全扫描与审计后处理")
 	ruleTier := flag.String("rule-tier", "all", "敏感规则层级: all/high/medium 或 critical,high")
 	baseURL := flag.String("base-url", "", "Postman/OpenAPI 基础 URL")
 	sarif := flag.Bool("sarif", false, "是否导出 SARIF 报告")
@@ -1091,6 +1098,7 @@ func handleDefaultCommand() {
 		Sensitive:     *sensitive,
 		Postman:       *postman,
 		Workspace:     *workspace,
+		Fast:          *fast,
 		RuleTier:      *ruleTier,
 		BaseURL:       *baseURL,
 		ExportSARIF:   *sarif,

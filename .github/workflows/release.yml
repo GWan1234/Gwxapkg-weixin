@@ -9,7 +9,7 @@ on:
       version:
         description: '发布版本号，例如 v2.7.0'
         required: true
-        default: 'v2.7.0'
+        default: 'v2.8.1'
       target_ref:
         description: '发布所基于的分支名或提交 SHA'
         required: true
@@ -57,7 +57,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          go build -ldflags="-s -w -X main.Version=${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}" \
+          go build -ldflags="-s -w -X main.version=${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}" \
             -o gwxapkg-${{ matrix.suffix }} .
 
       - name: Upload artifact

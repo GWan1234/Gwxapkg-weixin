@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-2.8.0-blue.svg)
+![Version](https://img.shields.io/badge/version-2.8.1-blue.svg)
 ![Go Version](https://img.shields.io/badge/go-%3E%3D1.23-00ADD8.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)
@@ -147,6 +147,9 @@ go run . -h
 # 解包单个 wxapkg 文件
 ./gwxapkg -id=<AppID> -in=<文件路径>
 
+# 纯反编译快速模式（对标只解密/解包/还原的工具）
+./gwxapkg -id=<AppID> -in=<文件或目录> -fast
+
 # 对已解包目录独立扫描，并额外导出 Postman Collection
 ./gwxapkg scan-only -dir=<目录> -format=both -postman
 
@@ -184,6 +187,7 @@ go run . -h
 | `-noClean` | 保留中间临时文件 | false |
 | `-save` | 保存解密后的文件 | false |
 | `-workspace` | 保留可精确回包的隐藏工作区 | false |
+| `-fast` | 快速反编译，跳过敏感扫描、语义/路由/业务面和 doctor 后处理 | false |
 | `--verbose` | 输出微信缓存候选路径诊断（仅 `scan` / `all`） | false |
 
 ### 使用示例
@@ -413,6 +417,16 @@ output/
 ---
 
 ## 🔄 版本更新
+
+### v2.8.1 - 解包稳定性、输出隔离与快速还原
+
+详见 [RELEASE_NOTES.md](RELEASE_NOTES.md)。
+
+- 保留 `app-config.json`、运行时脚本等原始解包证据文件
+- 新增 `-fast`：跳过 JS 美化、敏感扫描、语义重写和审计后处理，用于快速提取源码结构
+- 修复新版 WCC / CodeSpace WXML 在模拟环境下无限执行导致的卡死；超时页面会记录并跳过
+- 修复分包与组件相对路径导致文件写到 `-out` 上一级的问题；所有生成文件限制在输出目录内
+- 加固缺少 `entryPagePath`、分包页面声明和全局组件配置的兼容性
 
 ### v2.8.0 - 业务漏洞面 + 授权活体验证 + LLM 审计工作台
 

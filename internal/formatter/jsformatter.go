@@ -25,13 +25,26 @@ func (f *JSFormatter) Format(input []byte) ([]byte, error) {
 
 // FormatFile 按文件路径格式化并返回反混淆元数据
 func (f *JSFormatter) FormatFile(input []byte, filePath string) ([]byte, *DeobfuscationResult, error) {
+	configManager := NewSharedConfigManager()
+	if value, ok := configManager.Get("fast"); ok {
+		if fast, ok := value.(bool); ok && fast {
+			// 快速模式用于与纯解包工具对标：跳过 AST 反混淆，也跳过
+			// 对几十 MB 运行时脚本代价很高的美化。工程还原仍会照常执行。
+			return bytes.TrimSpace(input), nil, nil
+		}
+	}
+
 	result, err := AnalyzeJavaScript(input, filePath)
 	if err != nil {
 		return input, result, err
 	}
 
 	output := bytes.TrimSpace(result.Content)
-	configManager := NewSharedConfigManager()
+	output = formatJavaScriptOutput(output, result, configManager)
+	return output, result, nil
+}
+
+func formatJavaScriptOutput(output []byte, result *DeobfuscationResult, configManager *SharedConfigManager) []byte {
 	pretty := true
 	if value, ok := configManager.Get("pretty"); ok {
 		if enabled, ok := value.(bool); ok {
@@ -47,11 +60,10 @@ func (f *JSFormatter) FormatFile(input []byte, filePath string) ([]byte, *Deobfu
 		}
 	}
 
-	if result.IsObfuscated {
+	if result != nil && result.IsObfuscated {
 		output = prependObfuscatedHeader(output, result)
 	}
-
-	return output, result, nil
+	return output
 }
 
 func init() {
